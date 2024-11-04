@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[derive(Debug)]
 struct BackendIds {
     workflow_run_backend_id: String,
@@ -34,6 +35,7 @@ struct Client {
     run_id: String,
     token: String,
     base_url: String,
+    #[allow(dead_code)]
     backend_ids: BackendIds,
 }
 
@@ -46,13 +48,10 @@ impl Client {
         let owner = parts.next().unwrap().into();
         let repo = parts.next().unwrap().into();
         let run_id = std::env::var("GITHUB_RUN_ID").unwrap();
-        let token = std::env::var("GH_TOKEN").unwrap();
-        let runtime_token = std::env::var("ACTIONS_RUNTIME_TOKEN").unwrap();
+        let token = std::env::var("ACTIONS_RUNTIME_TOKEN").unwrap();
+        let backend_ids = decode_backend_ids(&token);
 
-        let backend_ids = decode_backend_ids(&runtime_token);
-        println!("{backend_ids:#?}");
-
-        let base_url = "https://api.github.com".into();
+        let base_url = std::env::var("ACTIONS_RESULTS_URL").unwrap();
 
         Self {
             client,
