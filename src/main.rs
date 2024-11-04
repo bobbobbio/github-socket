@@ -13,15 +13,13 @@ fn decode_backend_ids(token: &str) -> BackendIds {
         .unwrap();
     let v = serde_json::from_slice::<serde_json::Value>(&decoded).unwrap();
 
-    let mut scp_parts = v
-        .get("scp")
-        .unwrap()
-        .as_str()
-        .unwrap()
+    let scp = v.get("scp").unwrap().as_str().unwrap();
+
+    let scope_parts = scp
         .split(" ")
         .map(|p| p.split(":").collect::<Vec<_>>())
-        .filter(|p| p[0] != "Actions.Results");
-    let scope_parts = scp_parts.next().unwrap();
+        .find(|p| p[0] == "Actions.Results")
+        .unwrap();
 
     BackendIds {
         workflow_run_backend_id: scope_parts[1].into(),
