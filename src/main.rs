@@ -13,7 +13,7 @@ async fn main() {
     let base_url = "https://api.github.com";
     let req = client
         .get(format!(
-            "{base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts?{name}"
+            "{base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts/{name}"
         ))
         .header(
             "Accept",
