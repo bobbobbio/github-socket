@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Run
         run: cargo run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
