@@ -1,10 +1,5 @@
 #[tokio::main]
 async fn main() {
-
-    for (key, value) in std::env::vars() {
-        println!("{key}: {value}");
-    }
-
     let client = reqwest::Client::new();
 
     let github_repository = std::env::var("GITHUB_REPOSITORY").unwrap();
@@ -14,7 +9,7 @@ async fn main() {
     let run_id = std::env::var("GITHUB_RUN_ID").unwrap();
     let name = "foo";
 
-    let token = "unknown";
+    let token = std::env::var("ACTIONS_RUNTIME_TOKEN").unwrap();
     let base_url = "https://api.github.com";
     let resp = client
         .get(format!(
@@ -24,7 +19,7 @@ async fn main() {
             "Accept",
             "application/vnd.github.v3+json",
         )
-        .header("Authorization", &format!("token {token}"))
+        .header("Authorization", &format!("Bearer {token}"))
         .send()
         .await
         .unwrap();
