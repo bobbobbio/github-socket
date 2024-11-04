@@ -9,7 +9,7 @@ async fn main() {
     let run_id = std::env::var("GITHUB_RUN_ID").unwrap();
     let name = "foo";
 
-    let token = std::env::var("ACTIONS_RUNTIME_TOKEN").unwrap();
+    let token = std::env::var("GH_TOKEN").unwrap();
     let base_url = "https://api.github.com";
     let req = client
         .get(format!(
