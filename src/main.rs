@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 struct Client {
     client: reqwest::Client,
     owner: String,
@@ -17,6 +19,10 @@ impl Client {
         let repo = parts.next().unwrap().into();
         let run_id = std::env::var("GITHUB_RUN_ID").unwrap();
         let token = std::env::var("GH_TOKEN").unwrap();
+
+        let t: serde_json::Value = serde_json::from_str(&token).unwrap();
+        println!("{t:#?}");
+
         let base_url = "https://api.github.com".into();
 
         Self {
@@ -45,6 +51,31 @@ impl Client {
         println!("{resp:?}");
         println!("{}", resp.text().await.unwrap());
     }
+
+    /*
+    async fn post<T: Serialize>(&self, path: &str, body: &T) {
+        let resp = self.client
+            .post(format!(
+                "{base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts{path}",
+                base_url=&self.base_url,
+                owner=&self.owner,
+                repo=&self.repo,
+                run_id=&self.run_id,
+            ))
+            .header(
+                "Accept",
+                "application/vnd.github.v3+json",
+            )
+            .header("User-Agent", "@actions/artifact-2.1.11")
+            .header("Authorization", &format!("Bearer {token}", token=&self.token))
+            .json(body)
+            .send()
+            .await
+            .unwrap();
+        println!("{resp:?}");
+        println!("{}", resp.text().await.unwrap());
+    }
+    */
 }
 
 #[tokio::main]
