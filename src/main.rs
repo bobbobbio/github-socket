@@ -19,12 +19,10 @@ impl Client {
         let token = std::env::var("ACTIONS_RUNTIME_TOKEN").unwrap();
 
         use base64::Engine as _;
-        let token_decoded = base64::engine::general_purpose::STANDARD.decode(&token).unwrap();
-        let mut reader = &token_decoded[..];
-        while !reader.is_empty() {
-            let v = serde_json::from_reader::<_, serde_json::Value>(&mut reader).unwrap();
-            println!("{v:#?}");
-        }
+        let mut token_parts = token.split(".").skip(1);
+        let token_decoded = base64::engine::general_purpose::STANDARD.decode(token_parts.next().unwrap()).unwrap();
+        let v = serde_json::from_slice::<serde_json::Value>(&token_decoded).unwrap();
+        println!("{v:#?}");
 
         let base_url = "https://api.github.com".into();
 
