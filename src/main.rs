@@ -11,7 +11,7 @@ async fn main() {
 
     let token = std::env::var("ACTIONS_RUNTIME_TOKEN").unwrap();
     let base_url = "https://api.github.com";
-    let resp = client
+    let req = client
         .get(format!(
             "{base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts?{name}"
         ))
@@ -20,7 +20,10 @@ async fn main() {
             "application/vnd.github.v3+json",
         )
         .header("User-Agent", "@actions/artifact-2.1.11")
-        .header("Authorization", &format!("token {token}"))
+        .header("Authorization", &format!("token {token}"));
+    println!("{req:?}");
+
+    let resp = req
         .send()
         .await
         .unwrap();
