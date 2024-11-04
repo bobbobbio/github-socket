@@ -20,7 +20,7 @@ async fn main() {
             "application/vnd.github.v3+json",
         )
         .header("User-Agent", "@actions/artifact-2.1.11")
-        .header("Authorization", &format!("token {token}"));
+        .header("Authorization", &format!("Bearer {token}"));
     println!("{req:?}");
 
     let resp = req
