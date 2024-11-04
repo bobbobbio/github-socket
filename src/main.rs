@@ -19,6 +19,7 @@ async fn main() {
             "Accept",
             "application/vnd.github.v3+json",
         )
+        .header("User-Agent", "@actions/artifact-2.1.11")
         .header("Authorization", &format!("Bearer {token}"))
         .send()
         .await
