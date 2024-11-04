@@ -1,0 +1,14 @@
+name: Test B
+
+on:
+  push:
+
+jobs:
+  test:
+    name: Test B
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run
+        run: cargo run
