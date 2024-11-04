@@ -16,7 +16,7 @@ impl Client {
         let owner = parts.next().unwrap().into();
         let repo = parts.next().unwrap().into();
         let run_id = std::env::var("GITHUB_RUN_ID").unwrap();
-        let token = std::env::var("GH_TOKEN").unwrap();
+        let token = std::env::var("ACTIONS_RUNTIME_TOKEN").unwrap();
 
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&token);
