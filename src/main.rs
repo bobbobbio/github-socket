@@ -20,7 +20,8 @@ impl Client {
 
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&token);
-        println!("token: {b64}");
+        println!("token1: {}", &b64[..20]);
+        println!("token2: {}", &b64[20..]);
 
         let base_url = "https://api.github.com".into();
 
