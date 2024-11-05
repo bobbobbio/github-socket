@@ -1,4 +1,5 @@
-use serde::Serialize;
+use anyhow::{bail, Result};
+use serde::{de::DeserializeOwned, Serialize};
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -60,23 +61,32 @@ impl Client {
         }
     }
 
-    async fn request<T: Serialize>(&self, service: &str, method: &str, body: &T) {
-        let req = self.client
-            .post(format!("{base_url}twirp/{service}/{method}", base_url=&self.base_url))
-            .header(
-                "Content-Type", "application/json",
-            )
+    async fn request<BodyT: Serialize, RespT: DeserializeOwned>(
+        &self,
+        service: &str,
+        method: &str,
+        body: &BodyT,
+    ) -> Result<RespT> {
+        let req = self
+            .client
+            .post(format!(
+                "{base_url}twirp/{service}/{method}",
+                base_url = &self.base_url
+            ))
+            .header("Content-Type", "application/json")
             .header("User-Agent", "@actions/artifact-2.1.11")
-            .header("Authorization", &format!("Bearer {token}", token=&self.token))
+            .header(
+                "Authorization",
+                &format!("Bearer {token}", token = &self.token),
+            )
             .json(body);
-        println!("{req:#?}");
 
-        let resp = req
-            .send()
-            .await
-            .unwrap();
-        println!("{resp:?}");
-        println!("{}", resp.text().await.unwrap());
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            bail!("{}", resp.text().await.unwrap());
+        }
+
+        Ok(resp.json().await?)
     }
 }
 
@@ -96,7 +106,23 @@ async fn main() {
         workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
         workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
         name: "foo".into(),
-        version: 4
+        version: 4,
     };
-    client.request("github.actions.results.api.v1.ArtifactService", "CreateArtifact", &req).await;
+    let resp: serde_json::Value = client
+        .request(
+            "github.actions.results.api.v1.ArtifactService",
+            "CreateArtifact",
+            &req,
+        )
+        .await
+        .unwrap();
+
+    let upload_url =
+        url::Url::parse(resp.get("signed_upload_url").unwrap().as_str().unwrap()).unwrap();
+    let blob_client = azure_storage_blobs::prelude::BlobClient::from_sas_url(&upload_url).unwrap();
+    blob_client
+        .put_block_blob("hello world")
+        .content_type("text/plain")
+        .await
+        .unwrap();
 }
