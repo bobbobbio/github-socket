@@ -217,9 +217,6 @@ struct ListArtifactsRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Artifact {
-    workflow_run_backend_id: String,
-    workflow_job_run_backend_id: String,
-    database_id: String,
     name: String,
     size: String,
 }
