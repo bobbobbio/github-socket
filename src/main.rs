@@ -192,11 +192,11 @@ async fn upload(name: &str, content: &str) {
     let req = FinalizeArtifactRequest {
         workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
         workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
-        name: "foo".into(),
-        size: 11,
+        name: name.into(),
+        size: content.len() as u32,
     };
-    let resp: serde_json::Value = client
-        .request(
+    client
+        .request::<_, serde_json::Value>(
             "github.actions.results.api.v1.ArtifactService",
             "FinalizeArtifact",
             &req,
@@ -254,6 +254,7 @@ async fn download(name: &str) -> String {
             .unwrap();
 
         if resp.artifacts.is_empty() {
+            println!("waiting for {name:?} to appear");
             continue;
         }
         let Some(artifact) = resp.artifacts.iter().find(|a| a.name == name) else {
