@@ -88,6 +88,7 @@ impl TwirpClient {
     }
 }
 
+/*
 struct PublicClient {
     client: reqwest::Client,
     owner: String,
@@ -141,6 +142,7 @@ impl PublicClient {
         Ok(resp.json().await?)
     }
 }
+*/
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,21 +205,33 @@ async fn upload() {
     println!("{resp:#?}");
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListArtifactsRequest {
+    workflow_run_backend_id: String,
+    workflow_job_run_backend_id: String,
+}
+
 async fn download() {
-    let client = PublicClient::new();
-    let run_id: u64 = std::env::var("GITHUB_RUN_ID").unwrap().parse().unwrap();
-    loop {
-        if let Ok(resp) = client.list_artifacts(&format!("{}", run_id - 1)).await {
-            println!("{resp:#?}");
-        } else {
-            println!("waiting..");
-        }
-    }
+    let client = TwirpClient::new();
+    let req = ListArtifactsRequest {
+        workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
+        workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
+    };
+    let resp: serde_json::Value = client
+        .request(
+            "github.actions.results.api.v1.ArtifactService",
+            "ListArtifacts",
+            &req,
+        )
+        .await
+        .unwrap();
+    println!("{resp:#?}");
 }
 
 #[tokio::main]
 async fn main() {
-    if std::env::var("GITHUB_WORKFLOW").unwrap() == "Test A" {
+    if std::env::var("ACTION").unwrap() == "1" {
         upload().await;
     } else {
         download().await;

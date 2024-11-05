@@ -5,6 +5,9 @@ on:
 
 jobs:
   test:
+    strategy:
+      matrix:
+        action: [1, 2]
     name: Test A
     runs-on: ubuntu-latest
     steps:
@@ -16,3 +19,4 @@ jobs:
         run: cargo run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTION: ${{ matrix.action }}
