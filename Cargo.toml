@@ -6,6 +6,6 @@ edition = "2021"
 [dependencies]
 base64 = "*"
 tokio = { version = "*", features = ["rt-multi-thread", "macros"] }
-reqwest = "*"
-serde = "*"
+reqwest = { version = "*", features = ["json"] }
+serde = { version = "*", features = ["derive"] }
 serde_json = "*"
