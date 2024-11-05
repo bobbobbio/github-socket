@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use serde::{de::DeserializeOwned, Serialize, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[derive(Debug)]
 struct BackendIds {
@@ -216,7 +216,6 @@ struct ListArtifactsRequest {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct Artifact {
     workflow_run_backend_id: String,
     workflow_job_run_backend_id: String,
@@ -236,7 +235,7 @@ struct ListArtifactsResponse {
 struct GetSignedArtifactUrlRequest {
     workflow_run_backend_id: String,
     workflow_job_run_backend_id: String,
-    name: String
+    name: String,
 }
 
 async fn download() {
@@ -246,7 +245,7 @@ async fn download() {
             workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
             workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
         };
-        let resp: serde_json::Value = client
+        let resp: ListArtifactsResponse = client
             .request(
                 "github.actions.results.api.v1.ArtifactService",
                 "ListArtifacts",
@@ -255,39 +254,31 @@ async fn download() {
             .await
             .unwrap();
         println!("{resp:#?}");
-        /*
 
         if resp.artifacts.is_empty() {
             continue;
         }
+        let artifact = &resp.artifacts[0];
 
         let req = GetSignedArtifactUrlRequest {
-            workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
-            workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
-            name: "foo".into()
+            workflow_run_backend_id: artifact.workflow_run_backend_id.clone(),
+            workflow_job_run_backend_id: artifact.workflow_job_run_backend_id.clone(),
+            name: artifact.name.clone(),
         };
-        let result = client
+        let resp = client
             .request::<_, serde_json::Value>(
                 "github.actions.results.api.v1.ArtifactService",
                 "GetSignedArtifactURL",
                 &req,
             )
-            .await;
-        let resp = match result {
-            Ok(v) => v,
-            Err(e) => {
-                println!("got error {e:?}, retrying");
-                continue;
-            }
-        };
-        let url =
-            url::Url::parse(resp.get("signed_url").unwrap().as_str().unwrap()).unwrap();
+            .await
+            .unwrap();
+        let url = url::Url::parse(resp.get("signed_url").unwrap().as_str().unwrap()).unwrap();
         let blob_client = azure_storage_blobs::prelude::BlobClient::from_sas_url(&url).unwrap();
         let content = blob_client.get_content().await.unwrap();
 
         println!("content = {}", String::from_utf8_lossy(&content[..]));
         break;
-        */
     }
 }
 
