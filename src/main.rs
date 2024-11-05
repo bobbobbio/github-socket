@@ -11,8 +11,10 @@ fn decode_backend_ids(token: &str) -> BackendIds {
     use base64::Engine as _;
 
     let mut token_parts = token.split(".").skip(1);
+    let b64_part = token_parts.next().unwrap();
+    println!("{b64_part}");
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(token_parts.next().unwrap())
+        .decode(b64_part)
         .unwrap();
     let v = serde_json::from_slice::<serde_json::Value>(&decoded).unwrap();
 
