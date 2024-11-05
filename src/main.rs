@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BackendIds {
     workflow_run_backend_id: String,
     workflow_job_run_backend_id: String,
@@ -42,11 +43,6 @@ impl TwirpClient {
     fn new() -> Self {
         let client = reqwest::Client::new();
 
-        // let github_repository = std::env::var("GITHUB_REPOSITORY").unwrap();
-        // let mut parts = github_repository.split('/');
-        // let owner = parts.next().unwrap().into();
-        // let repo = parts.next().unwrap().into();
-        // let run_id = std::env::var("GITHUB_RUN_ID").unwrap();
         let token = std::env::var("ACTIONS_RUNTIME_TOKEN").unwrap();
         let backend_ids = decode_backend_ids(&token);
 
@@ -89,67 +85,11 @@ impl TwirpClient {
     }
 }
 
-/*
-struct PublicClient {
-    client: reqwest::Client,
-    owner: String,
-    repo: String,
-    token: String,
-    base_url: String,
-}
-
-impl PublicClient {
-    fn new() -> Self {
-        let client = reqwest::Client::new();
-
-        let github_repository = std::env::var("GITHUB_REPOSITORY").unwrap();
-        let mut parts = github_repository.split('/');
-        let owner = parts.next().unwrap().into();
-        let repo = parts.next().unwrap().into();
-        let token = std::env::var("GH_TOKEN").unwrap();
-
-        let base_url = "https://api.github.com".into();
-
-        Self {
-            client,
-            token,
-            owner,
-            repo,
-            base_url,
-        }
-    }
-
-    async fn list_artifacts(&self, run_id: &str) -> Result<serde_json::Value> {
-        let req = self
-            .client
-            .get(format!(
-                "{base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
-                base_url = &self.base_url,
-                owner = &self.owner,
-                repo = &self.repo,
-            ))
-            .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "@actions/artifact-2.1.11")
-            .header(
-                "Authorization",
-                &format!("Bearer {token}", token = &self.token),
-            );
-
-        let resp = req.send().await?;
-        if !resp.status().is_success() {
-            bail!("{}", resp.text().await.unwrap());
-        }
-
-        Ok(resp.json().await?)
-    }
-}
-*/
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateArtifactRequest {
-    workflow_run_backend_id: String,
-    workflow_job_run_backend_id: String,
+    #[serde(flatten)]
+    backend_ids: BackendIds,
     name: String,
     version: u32,
 }
@@ -157,72 +97,33 @@ struct CreateArtifactRequest {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FinalizeArtifactRequest {
-    workflow_run_backend_id: String,
-    workflow_job_run_backend_id: String,
+    #[serde(flatten)]
+    backend_ids: BackendIds,
     name: String,
     size: u32,
 }
 
-async fn upload(name: &str, content: &str) {
-    let client = TwirpClient::new();
-    let req = CreateArtifactRequest {
-        workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
-        workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
-        name: name.into(),
-        version: 4,
-    };
-    let resp: serde_json::Value = client
-        .request(
-            "github.actions.results.api.v1.ArtifactService",
-            "CreateArtifact",
-            &req,
-        )
-        .await
-        .unwrap();
-
-    let upload_url =
-        url::Url::parse(resp.get("signed_upload_url").unwrap().as_str().unwrap()).unwrap();
-    let blob_client = azure_storage_blobs::prelude::BlobClient::from_sas_url(&upload_url).unwrap();
-    blob_client
-        .put_block_blob(content.to_owned())
-        .content_type("text/plain")
-        .await
-        .unwrap();
-
-    let req = FinalizeArtifactRequest {
-        workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
-        workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
-        name: name.into(),
-        size: content.len() as u32,
-    };
-    client
-        .request::<_, serde_json::Value>(
-            "github.actions.results.api.v1.ArtifactService",
-            "FinalizeArtifact",
-            &req,
-        )
-        .await
-        .unwrap();
-}
-
-#[allow(dead_code)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ListArtifactsRequest {
-    workflow_run_backend_id: String,
-    workflow_job_run_backend_id: String,
+    #[serde(flatten)]
+    backend_ids: BackendIds,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Artifact {
-    workflow_run_backend_id: String,
-    workflow_job_run_backend_id: String,
+    #[serde(flatten, with = "BackendIdsSnakeCase")]
+    backend_ids: BackendIds,
     name: String,
-    size: String,
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "BackendIds")]
+struct BackendIdsSnakeCase {
+    workflow_run_backend_id: String,
+    workflow_job_run_backend_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListArtifactsResponse {
@@ -232,19 +133,69 @@ struct ListArtifactsResponse {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GetSignedArtifactUrlRequest {
-    workflow_run_backend_id: String,
-    workflow_job_run_backend_id: String,
+    #[serde(flatten)]
+    backend_ids: BackendIds,
     name: String,
 }
 
-async fn download(name: &str) -> String {
-    let client = TwirpClient::new();
-    loop {
-        let req = ListArtifactsRequest {
-            workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
-            workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
+struct GhClient {
+    client: TwirpClient,
+}
+
+impl GhClient {
+    fn new() -> Self {
+        Self {
+            client: TwirpClient::new(),
+        }
+    }
+
+    async fn upload(&self, name: &str, content: &str) {
+        let req = CreateArtifactRequest {
+            backend_ids: self.client.backend_ids.clone(),
+            name: name.into(),
+            version: 4,
         };
-        let resp: ListArtifactsResponse = client
+        let resp: serde_json::Value = self
+            .client
+            .request(
+                "github.actions.results.api.v1.ArtifactService",
+                "CreateArtifact",
+                &req,
+            )
+            .await
+            .unwrap();
+
+        let upload_url =
+            url::Url::parse(resp.get("signed_upload_url").unwrap().as_str().unwrap()).unwrap();
+        let blob_client =
+            azure_storage_blobs::prelude::BlobClient::from_sas_url(&upload_url).unwrap();
+        blob_client
+            .put_block_blob(content.to_owned())
+            .content_type("text/plain")
+            .await
+            .unwrap();
+
+        let req = FinalizeArtifactRequest {
+            backend_ids: self.client.backend_ids.clone(),
+            name: name.into(),
+            size: content.len() as u32,
+        };
+        self.client
+            .request::<_, serde_json::Value>(
+                "github.actions.results.api.v1.ArtifactService",
+                "FinalizeArtifact",
+                &req,
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn list(&self) -> Vec<Artifact> {
+        let req = ListArtifactsRequest {
+            backend_ids: self.client.backend_ids.clone(),
+        };
+        let resp: ListArtifactsResponse = self
+            .client
             .request(
                 "github.actions.results.api.v1.ArtifactService",
                 "ListArtifacts",
@@ -252,22 +203,16 @@ async fn download(name: &str) -> String {
             )
             .await
             .unwrap();
+        resp.artifacts
+    }
 
-        if resp.artifacts.is_empty() {
-            println!("waiting for {name:?} to appear");
-            continue;
-        }
-        let Some(artifact) = resp.artifacts.iter().find(|a| a.name == name) else {
-            println!("waiting for {name:?} to appear");
-            continue;
-        };
-
+    async fn download(&self, backend_ids: BackendIds, name: &str) -> String {
         let req = GetSignedArtifactUrlRequest {
-            workflow_run_backend_id: artifact.workflow_run_backend_id.clone(),
-            workflow_job_run_backend_id: artifact.workflow_job_run_backend_id.clone(),
-            name: artifact.name.clone(),
+            backend_ids,
+            name: name.into(),
         };
-        let resp = client
+        let resp = self
+            .client
             .request::<_, serde_json::Value>(
                 "github.actions.results.api.v1.ArtifactService",
                 "GetSignedArtifactURL",
@@ -278,26 +223,42 @@ async fn download(name: &str) -> String {
         let url = url::Url::parse(resp.get("signed_url").unwrap().as_str().unwrap()).unwrap();
         let blob_client = azure_storage_blobs::prelude::BlobClient::from_sas_url(&url).unwrap();
         let content = blob_client.get_content().await.unwrap();
+        String::from_utf8_lossy(&content[..]).into()
+    }
+}
 
-        break String::from_utf8_lossy(&content[..]).into();
+async fn wait_for_artifact(client: &GhClient, name: &str) -> BackendIds {
+    loop {
+        let artifacts = client.list().await;
+        if let Some(artifact) = artifacts.iter().find(|a| a.name == name) {
+            return artifact.backend_ids.clone();
+        } else {
+            println!("waiting for {name}");
+        }
     }
 }
 
 #[tokio::main]
 async fn main() {
+    let client = GhClient::new();
+
     if std::env::var("ACTION").unwrap() == "1" {
         println!("sending ping");
-        upload("foo1", "ping").await;
+        client.upload("foo1", "ping").await;
         println!("sent ping");
 
-        let content = download("foo2").await;
+        let backend_ids = wait_for_artifact(&client, "foo2").await;
+
+        let content = client.download(backend_ids, "foo2").await;
         println!("received message {content:?}");
     } else {
-        let content = download("foo1").await;
+        let backend_ids = wait_for_artifact(&client, "foo1").await;
+
+        let content = client.download(backend_ids, "foo1").await;
         println!("received message {content:?}");
 
         println!("sending pong");
-        upload("foo2", "pong").await;
+        client.upload("foo2", "pong").await;
         println!("sent pong");
     }
 }
