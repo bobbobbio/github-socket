@@ -61,14 +61,17 @@ impl Client {
     }
 
     async fn request<T: Serialize>(&self, service: &str, method: &str, body: &T) {
-        let resp = self.client
+        let req = self.client
             .post(format!("{base_url}/twirp/{service}/{method}", base_url=&self.base_url))
             .header(
                 "Content-Type", "application/json",
             )
             .header("User-Agent", "@actions/artifact-2.1.11")
             .header("Authorization", &format!("Bearer {token}", token=&self.token))
-            .json(body)
+            .json(body);
+        println!("{req:#?}");
+
+        let resp = req
             .send()
             .await
             .unwrap();
