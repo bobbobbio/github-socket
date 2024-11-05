@@ -240,7 +240,6 @@ struct GetSignedArtifactUrlRequest {
 async fn download() {
     let client = TwirpClient::new();
     loop {
-        /*
         let req = ListArtifactsRequest {
             workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
             workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
@@ -255,10 +254,9 @@ async fn download() {
             .unwrap();
         println!("{resp:#?}");
 
-        if !resp.artifacts.is_empty() {
-            break;
+        if resp.artifacts.is_empty() {
+            continue;
         }
-        */
 
         let req = GetSignedArtifactUrlRequest {
             workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
