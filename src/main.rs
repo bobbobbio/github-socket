@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Serialize, Deserialize};
 
 #[derive(Debug)]
 struct BackendIds {
@@ -213,21 +213,44 @@ struct ListArtifactsRequest {
     workflow_job_run_backend_id: String,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Artifact {
+    workflow_run_backend_id: String,
+    workflow_job_run_backend_id: String,
+    database_id: String,
+    name: String,
+    size: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListArtifactsResponse {
+    artifacts: Vec<Artifact>,
+}
+
 async fn download() {
     let client = TwirpClient::new();
-    let req = ListArtifactsRequest {
-        workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
-        workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
-    };
-    let resp: serde_json::Value = client
-        .request(
-            "github.actions.results.api.v1.ArtifactService",
-            "ListArtifacts",
-            &req,
-        )
-        .await
-        .unwrap();
-    println!("{resp:#?}");
+    loop {
+        let req = ListArtifactsRequest {
+            workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
+            workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
+        };
+        let resp: ListArtifactsResponse = client
+            .request(
+                "github.actions.results.api.v1.ArtifactService",
+                "ListArtifacts",
+                &req,
+            )
+            .await
+            .unwrap();
+        println!("{resp:#?}");
+
+        if !resp.artifacts.is_empty() {
+            break;
+        }
+    }
 }
 
 #[tokio::main]
