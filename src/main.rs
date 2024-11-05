@@ -163,12 +163,12 @@ struct FinalizeArtifactRequest {
     size: u32,
 }
 
-async fn upload() {
+async fn upload(name: &str, content: &str) {
     let client = TwirpClient::new();
     let req = CreateArtifactRequest {
         workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
         workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
-        name: "foo".into(),
+        name: name.into(),
         version: 4,
     };
     let resp: serde_json::Value = client
@@ -184,7 +184,7 @@ async fn upload() {
         url::Url::parse(resp.get("signed_upload_url").unwrap().as_str().unwrap()).unwrap();
     let blob_client = azure_storage_blobs::prelude::BlobClient::from_sas_url(&upload_url).unwrap();
     blob_client
-        .put_block_blob("hello world")
+        .put_block_blob(content.to_owned())
         .content_type("text/plain")
         .await
         .unwrap();
@@ -203,7 +203,6 @@ async fn upload() {
         )
         .await
         .unwrap();
-    println!("{resp:#?}");
 }
 
 #[allow(dead_code)]
@@ -238,7 +237,7 @@ struct GetSignedArtifactUrlRequest {
     name: String,
 }
 
-async fn download() {
+async fn download(name: &str) -> String {
     let client = TwirpClient::new();
     loop {
         let req = ListArtifactsRequest {
@@ -253,12 +252,14 @@ async fn download() {
             )
             .await
             .unwrap();
-        println!("{resp:#?}");
 
         if resp.artifacts.is_empty() {
             continue;
         }
-        let artifact = &resp.artifacts[0];
+        let Some(artifact) = resp.artifacts.iter().find(|a| a.name == name) else {
+            println!("waiting for {name:?} to appear");
+            continue;
+        };
 
         let req = GetSignedArtifactUrlRequest {
             workflow_run_backend_id: artifact.workflow_run_backend_id.clone(),
@@ -277,16 +278,25 @@ async fn download() {
         let blob_client = azure_storage_blobs::prelude::BlobClient::from_sas_url(&url).unwrap();
         let content = blob_client.get_content().await.unwrap();
 
-        println!("content = {}", String::from_utf8_lossy(&content[..]));
-        break;
+        break String::from_utf8_lossy(&content[..]).into();
     }
 }
 
 #[tokio::main]
 async fn main() {
     if std::env::var("ACTION").unwrap() == "1" {
-        upload().await;
+        println!("sending ping");
+        upload("foo1", "ping").await;
+        println!("sent ping");
+
+        let content = download("foo2").await;
+        println!("received message {content:?}");
     } else {
-        download().await;
+        let content = download("foo1").await;
+        println!("received message {content:?}");
+
+        println!("sending pong");
+        upload("foo2", "pong").await;
+        println!("sent pong");
     }
 }
