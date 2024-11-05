@@ -117,11 +117,11 @@ impl PublicClient {
         }
     }
 
-    async fn list_workflow_runs(&self) {
+    async fn list_artifacts(&self, run_id: &str) {
         let resp = self
             .client
             .get(format!(
-                "{base_url}/repos/{owner}/{repo}/actions/runs",
+                "{base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
                 base_url = &self.base_url,
                 owner = &self.owner,
                 repo = &self.repo,
@@ -203,7 +203,8 @@ async fn upload() {
 
 async fn download() {
     let client = PublicClient::new();
-    client.list_workflow_runs().await;
+    let run_id: u32 = std::env::var("GITHUB_RUN_ID").unwrap().parse().unwrap();
+    client.list_artifacts(&format!("{}", run_id - 1)).await;
 }
 
 #[tokio::main]
