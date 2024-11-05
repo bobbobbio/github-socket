@@ -62,7 +62,7 @@ impl Client {
 
     async fn request<T: Serialize>(&self, service: &str, method: &str, body: &T) {
         let req = self.client
-            .post(format!("{base_url}/twirp/{service}/{method}", base_url=&self.base_url))
+            .post(format!("{base_url}twirp/{service}/{method}", base_url=&self.base_url))
             .header(
                 "Content-Type", "application/json",
             )
