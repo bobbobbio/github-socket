@@ -203,7 +203,7 @@ async fn upload() {
 
 async fn download() {
     let client = PublicClient::new();
-    let run_id: u32 = std::env::var("GITHUB_RUN_ID").unwrap().parse().unwrap();
+    let run_id: u64 = std::env::var("GITHUB_RUN_ID").unwrap().parse().unwrap();
     client.list_artifacts(&format!("{}", run_id - 1)).await;
 }
 
