@@ -1,7 +1,6 @@
 use anyhow::{bail, Result};
 use serde::{de::DeserializeOwned, Serialize};
 
-#[allow(dead_code)]
 #[derive(Debug)]
 struct BackendIds {
     workflow_run_backend_id: String,
@@ -31,15 +30,14 @@ fn decode_backend_ids(token: &str) -> BackendIds {
     }
 }
 
-struct Client {
+struct TwirpClient {
     client: reqwest::Client,
     token: String,
     base_url: String,
-    #[allow(dead_code)]
     backend_ids: BackendIds,
 }
 
-impl Client {
+impl TwirpClient {
     fn new() -> Self {
         let client = reqwest::Client::new();
 
@@ -90,6 +88,58 @@ impl Client {
     }
 }
 
+struct PublicClient {
+    client: reqwest::Client,
+    owner: String,
+    repo: String,
+    token: String,
+    base_url: String,
+}
+
+impl PublicClient {
+    fn new() -> Self {
+        let client = reqwest::Client::new();
+
+        let github_repository = std::env::var("GITHUB_REPOSITORY").unwrap();
+        let mut parts = github_repository.split('/');
+        let owner = parts.next().unwrap().into();
+        let repo = parts.next().unwrap().into();
+        let token = std::env::var("GH_TOKEN").unwrap();
+
+        let base_url = "https://api.github.com".into();
+
+        Self {
+            client,
+            token,
+            owner,
+            repo,
+            base_url,
+        }
+    }
+
+    async fn list_workflow_runs(&self) {
+        let resp = self
+            .client
+            .get(format!(
+                "{base_url}/repos/{owner}/{repo}/actions/runs",
+                base_url = &self.base_url,
+                owner = &self.owner,
+                repo = &self.repo,
+            ))
+            .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "@actions/artifact-2.1.11")
+            .header(
+                "Authorization",
+                &format!("Bearer {token}", token = &self.token),
+            )
+            .send()
+            .await
+            .unwrap();
+        println!("{resp:?}");
+        println!("{}", resp.text().await.unwrap());
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateArtifactRequest {
@@ -108,9 +158,8 @@ struct FinalizeArtifactRequest {
     size: u32,
 }
 
-#[tokio::main]
-async fn main() {
-    let client = Client::new();
+async fn upload() {
+    let client = TwirpClient::new();
     let req = CreateArtifactRequest {
         workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
         workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
@@ -150,4 +199,18 @@ async fn main() {
         .await
         .unwrap();
     println!("{resp:#?}");
+}
+
+async fn download() {
+    let client = PublicClient::new();
+    client.list_workflow_runs().await;
+}
+
+#[tokio::main]
+async fn main() {
+    if std::env::var("GITHUB_WORKFLOW").unwrap() == "Test A" {
+        upload().await;
+    } else {
+        download().await;
+    }
 }
