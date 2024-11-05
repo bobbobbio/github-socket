@@ -218,6 +218,8 @@ struct ListArtifactsRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Artifact {
+    workflow_run_backend_id: String,
+    workflow_job_run_backend_id: String,
     name: String,
     size: String,
 }
@@ -244,7 +246,7 @@ async fn download() {
             workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
             workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
         };
-        let resp: ListArtifactsResponse = client
+        let resp: serde_json::Value = client
             .request(
                 "github.actions.results.api.v1.ArtifactService",
                 "ListArtifacts",
@@ -253,6 +255,7 @@ async fn download() {
             .await
             .unwrap();
         println!("{resp:#?}");
+        /*
 
         if resp.artifacts.is_empty() {
             continue;
@@ -284,6 +287,7 @@ async fn download() {
 
         println!("content = {}", String::from_utf8_lossy(&content[..]));
         break;
+        */
     }
 }
 
