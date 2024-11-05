@@ -99,6 +99,15 @@ struct CreateArtifactRequest {
     version: u32,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FinalizeArtifactRequest {
+    workflow_run_backend_id: String,
+    workflow_job_run_backend_id: String,
+    name: String,
+    size: u32,
+}
+
 #[tokio::main]
 async fn main() {
     let client = Client::new();
@@ -125,4 +134,20 @@ async fn main() {
         .content_type("text/plain")
         .await
         .unwrap();
+
+    let req = FinalizeArtifactRequest {
+        workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
+        workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
+        name: "foo".into(),
+        size: 11,
+    };
+    let resp: serde_json::Value = client
+        .request(
+            "github.actions.results.api.v1.ArtifactService",
+            "FinalizeArtifact",
+            &req,
+        )
+        .await
+        .unwrap();
+    println!("{resp:#?}");
 }
