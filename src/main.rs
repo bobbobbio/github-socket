@@ -206,6 +206,7 @@ async fn upload() {
     println!("{resp:#?}");
 }
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ListArtifactsRequest {
@@ -221,15 +222,25 @@ struct Artifact {
     size: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListArtifactsResponse {
     artifacts: Vec<Artifact>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GetSignedArtifactUrlRequest {
+    workflow_run_backend_id: String,
+    workflow_job_run_backend_id: String,
+    name: String
+}
+
 async fn download() {
     let client = TwirpClient::new();
     loop {
+        /*
         let req = ListArtifactsRequest {
             workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
             workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
@@ -247,6 +258,34 @@ async fn download() {
         if !resp.artifacts.is_empty() {
             break;
         }
+        */
+
+        let req = GetSignedArtifactUrlRequest {
+            workflow_run_backend_id: client.backend_ids.workflow_run_backend_id.clone(),
+            workflow_job_run_backend_id: client.backend_ids.workflow_job_run_backend_id.clone(),
+            name: "foo".into()
+        };
+        let result = client
+            .request::<_, serde_json::Value>(
+                "github.actions.results.api.v1.ArtifactService",
+                "GetSignedArtifactURL",
+                &req,
+            )
+            .await;
+        let resp = match result {
+            Ok(v) => v,
+            Err(e) => {
+                println!("got error {e:?}, retrying");
+                continue;
+            }
+        };
+        let url =
+            url::Url::parse(resp.get("signed_url").unwrap().as_str().unwrap()).unwrap();
+        let blob_client = azure_storage_blobs::prelude::BlobClient::from_sas_url(&url).unwrap();
+        let content = blob_client.get_content().await.unwrap();
+
+        println!("content = {}", String::from_utf8_lossy(&content[..]));
+        break;
     }
 }
 
