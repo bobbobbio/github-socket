@@ -117,8 +117,8 @@ impl PublicClient {
         }
     }
 
-    async fn list_artifacts(&self, run_id: &str) {
-        let resp = self
+    async fn list_artifacts(&self, run_id: &str) -> Result<serde_json::Value> {
+        let req = self
             .client
             .get(format!(
                 "{base_url}/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
@@ -131,12 +131,14 @@ impl PublicClient {
             .header(
                 "Authorization",
                 &format!("Bearer {token}", token = &self.token),
-            )
-            .send()
-            .await
-            .unwrap();
-        println!("{resp:?}");
-        println!("{}", resp.text().await.unwrap());
+            );
+
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            bail!("{}", resp.text().await.unwrap());
+        }
+
+        Ok(resp.json().await?)
     }
 }
 
@@ -204,7 +206,13 @@ async fn upload() {
 async fn download() {
     let client = PublicClient::new();
     let run_id: u64 = std::env::var("GITHUB_RUN_ID").unwrap().parse().unwrap();
-    client.list_artifacts(&format!("{}", run_id - 1)).await;
+    loop {
+        if let Ok(resp) = client.list_artifacts(&format!("{}", run_id - 1)).await {
+            println!("{resp:#?}");
+        } else {
+            println!("waiting..");
+        }
+    }
 }
 
 #[tokio::main]
