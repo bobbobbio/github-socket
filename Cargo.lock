@@ -569,12 +569,17 @@ name = "github-socket"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "azure_core",
  "azure_storage_blobs",
  "base64 0.22.1",
+ "bytes",
+ "futures-core",
+ "futures-util",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
  "url",
 ]
 
