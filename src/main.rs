@@ -230,6 +230,14 @@ impl GhClient {
         Ok(resp.artifacts)
     }
 
+    async fn start_download_retry(&self, backend_ids: BackendIds, name: &str) -> Result<BlobClient> {
+        loop {
+            if let Ok(client) = self.start_download(backend_ids.clone(), name).await {
+                return Ok(client)
+            }
+        }
+    }
+
     async fn start_download(&self, backend_ids: BackendIds, name: &str) -> Result<BlobClient> {
         let req = GetSignedArtifactUrlRequest {
             backend_ids,
@@ -317,7 +325,7 @@ impl GhReadSocket {
             sequence_id: 2,
             state: GhReadSocketState::Getting(Box::pin(async move {
                 Ok(client
-                    .start_download(remote_backend_ids, &format!("{unique_id}-1"))
+                    .start_download_retry(remote_backend_ids, &format!("{unique_id}-1"))
                     .await?)
             })),
         }
@@ -338,7 +346,7 @@ impl AsyncRead for GhReadSocket {
                     let remote_backend_ids = self.remote_backend_ids.clone();
                     let next = format!("{}-{}", self.unique_id, self.sequence_id);
                     self.state = GhReadSocketState::Getting(Box::pin(async move {
-                        Ok(client.start_download(remote_backend_ids, &next).await?)
+                        Ok(client.start_download_retry(remote_backend_ids, &next).await?)
                     }));
                     self.sequence_id += 1;
                     self.poll_read(cx, buf)
