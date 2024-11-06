@@ -428,6 +428,7 @@ impl AsyncWrite for GhWriteSocket {
                 bytes_written,
             } => {
                 if let Some(PendingWrite { f, size }) = pending {
+                    println!("write socket: pending write poll");
                     ready!(pin!(f).poll(cx))
                         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                     let write_size = *size;
@@ -435,6 +436,7 @@ impl AsyncWrite for GhWriteSocket {
                     *pending = None;
                     Poll::Ready(Ok(write_size))
                 } else {
+                    println!("write socket: pending write start");
                     *pending = Some(PendingWrite {
                         f: client.append_block(src.to_owned()).into_future(),
                         size: src.len(),
@@ -443,8 +445,10 @@ impl AsyncWrite for GhWriteSocket {
                 }
             }
             GhWriteSocketState::Getting(f) => {
+                println!("write socket: getting write poll");
                 let client = ready!(pin!(f).poll(cx))
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                println!("write socket: write mode start");
                 self.state = GhWriteSocketState::Writing {
                     client,
                     pending: None,
@@ -463,6 +467,7 @@ impl AsyncWrite for GhWriteSocket {
                 pending,
                 bytes_written,
             } => {
+                println!("write socket: starting flush");
                 assert!(pending.is_none(), "pending write when flushing");
                 let size = *bytes_written;
                 let client = self.client.clone();
@@ -473,11 +478,13 @@ impl AsyncWrite for GhWriteSocket {
                 self.poll_flush(cx)
             }
             GhWriteSocketState::Flushing(f) => {
+                println!("write socket: flush poll");
                 ready!(pin!(f).poll(cx))
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                 self.sequence_id += 1;
                 let client = self.client.clone();
                 let next = format!("{}-{}", self.unique_id, self.sequence_id);
+                println!("write socket: getting start");
                 self.state = GhWriteSocketState::Getting(Box::pin(async move {
                     let client = client.start_upload(&next).await?;
                     client.put_append_blob().await?;
