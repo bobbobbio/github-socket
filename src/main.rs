@@ -290,6 +290,7 @@ impl Stream for BlobBytesStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(body) = &mut self.response_body {
             if let Some(value) = ready!(futures_util::Stream::poll_next(pin!(body), cx)) {
+                println!("got new response body chunk");
                 return Poll::Ready(Some(
                     value.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string())),
                 ));
@@ -301,7 +302,9 @@ impl Stream for BlobBytesStream {
             pin!(&mut self.response_body_stream),
             cx
         )) {
+            println!("got new response body stream message");
             let resp = resp.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            println!("got new response body");
             self.response_body = Some(resp.data);
             self.poll_next(cx)
         } else {
@@ -332,9 +335,11 @@ impl GhReadSocket {
             unique_id: unique_id.clone(),
             sequence_id: 2,
             state: GhReadSocketState::Getting(Box::pin(async move {
-                Ok(client
+                let bc = client
                     .start_download_retry(remote_backend_ids, &format!("{unique_id}-1"))
-                    .await?)
+                    .await?;
+                println!("received blob client");
+                Ok(client)
             })),
         }
     }
