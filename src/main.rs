@@ -323,8 +323,8 @@ impl GhSocket {
         client.upload(&format!("{key}-connect"), " ").await?;
         let backend_ids = wait_for_artifact(&client, &format!("{key}-listen")).await?;
         Ok(Self {
-            read: GhReadSocket::new(client.clone(), backend_ids, key.into()),
-            write: GhWriteSocket::new(client, key.into()),
+            read: GhReadSocket::new(client.clone(), backend_ids, format!("{key}-down")),
+            write: GhWriteSocket::new(client, format!("{key}-up")),
         })
     }
 
@@ -333,8 +333,8 @@ impl GhSocket {
         client.upload(&format!("{key}-listen"), " ").await?;
         let backend_ids = wait_for_artifact(&client, &format!("{key}-connect")).await?;
         Ok(Self {
-            read: GhReadSocket::new(client.clone(), backend_ids, key.into()),
-            write: GhWriteSocket::new(client, key.into()),
+            read: GhReadSocket::new(client.clone(), backend_ids, format!("{key}-up")),
+            write: GhWriteSocket::new(client, format!("{key}-down")),
         })
     }
 
