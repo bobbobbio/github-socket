@@ -287,7 +287,6 @@ impl Stream for BlobBytesStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(body) = &mut self.response_body {
             if let Some(value) = ready!(futures_util::Stream::poll_next(pin!(body), cx)) {
-                println!("got new response body chunk");
                 return Poll::Ready(Some(
                     value.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string())),
                 ));
@@ -299,9 +298,7 @@ impl Stream for BlobBytesStream {
             pin!(&mut self.response_body_stream),
             cx
         )) {
-            println!("got new response body stream message");
             let resp = resp.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            println!("got new response body");
             self.response_body = Some(resp.data);
             self.poll_next(cx)
         } else {
@@ -428,7 +425,6 @@ impl AsyncWrite for GhWriteSocket {
                 bytes_written,
             } => {
                 if let Some(PendingWrite { f, size }) = pending {
-                    println!("write socket: pending write poll");
                     ready!(pin!(f).poll(cx))
                         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                     let write_size = *size;
@@ -436,7 +432,6 @@ impl AsyncWrite for GhWriteSocket {
                     *pending = None;
                     Poll::Ready(Ok(write_size))
                 } else {
-                    println!("write socket: pending write start");
                     *pending = Some(PendingWrite {
                         f: client.put_block_blob(src.to_owned()).content_type("text/plain").into_future(),
                         size: src.len(),
@@ -445,10 +440,8 @@ impl AsyncWrite for GhWriteSocket {
                 }
             }
             GhWriteSocketState::Getting(f) => {
-                println!("write socket: getting write poll");
                 let client = ready!(pin!(f).poll(cx))
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                println!("write socket: write mode start");
                 self.state = GhWriteSocketState::Writing {
                     client,
                     pending: None,
@@ -467,7 +460,6 @@ impl AsyncWrite for GhWriteSocket {
                 pending,
                 bytes_written,
             } => {
-                println!("write socket: starting flush");
                 assert!(pending.is_none(), "pending write when flushing");
                 let size = *bytes_written;
                 let client = self.client.clone();
@@ -478,13 +470,11 @@ impl AsyncWrite for GhWriteSocket {
                 self.poll_flush(cx)
             }
             GhWriteSocketState::Flushing(f) => {
-                println!("write socket: flush poll");
                 ready!(pin!(f).poll(cx))
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                 self.sequence_id += 1;
                 let client = self.client.clone();
                 let next = format!("{}-{}", self.unique_id, self.sequence_id);
-                println!("write socket: getting start");
                 self.state = GhWriteSocketState::Getting(Box::pin(async move {
                     client.start_upload(&next).await
                 }));
