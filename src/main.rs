@@ -210,10 +210,10 @@ impl GhClient {
     async fn upload(&self, name: &str, content: &str) -> Result<()> {
         let blob_client = self.start_upload(name).await?;
         blob_client
-            .put_block_blob(content.to_owned())
-            .content_type("text/plain")
-            .await
-            .unwrap();
+            .put_append_blob().await?;
+        blob_client
+            .append_block(content.to_owned())
+            .await?;
         self.finish_upload(name, content.len()).await?;
         Ok(())
     }
