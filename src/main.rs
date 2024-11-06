@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use azure_storage_blobs::{
-    blob::operations::{AppendBlock, GetBlobResponse},
+    blob::operations::{PutBlockBlob, GetBlobResponse},
     prelude::BlobClient,
 };
 use bytes::Bytes;
@@ -210,10 +210,7 @@ impl GhClient {
     async fn upload(&self, name: &str, content: &str) -> Result<()> {
         let blob_client = self.start_upload(name).await?;
         blob_client
-            .put_append_blob().await?;
-        blob_client
-            .append_block(content.to_owned())
-            .await?;
+            .put_block_blob(content.to_owned()).content_type("text/plain").await?;
         self.finish_upload(name, content.len()).await?;
         Ok(())
     }
@@ -382,7 +379,7 @@ impl AsyncRead for GhReadSocket {
 }
 
 struct PendingWrite {
-    f: AppendBlock,
+    f: PutBlockBlob,
     size: usize,
 }
 
@@ -412,9 +409,7 @@ impl GhWriteSocket {
             unique_id,
             sequence_id: 1,
             state: GhWriteSocketState::Getting(Box::pin(async move {
-                let client = client.start_upload(&next).await?;
-                client.put_append_blob().await?;
-                Ok(client)
+                client.start_upload(&next).await
             })),
         }
     }
@@ -443,7 +438,7 @@ impl AsyncWrite for GhWriteSocket {
                 } else {
                     println!("write socket: pending write start");
                     *pending = Some(PendingWrite {
-                        f: client.append_block(src.to_owned()).into_future(),
+                        f: client.put_block_blob(src.to_owned()).content_type("text/plain").into_future(),
                         size: src.len(),
                     });
                     self.poll_write(cx, src)
@@ -491,9 +486,7 @@ impl AsyncWrite for GhWriteSocket {
                 let next = format!("{}-{}", self.unique_id, self.sequence_id);
                 println!("write socket: getting start");
                 self.state = GhWriteSocketState::Getting(Box::pin(async move {
-                    let client = client.start_upload(&next).await?;
-                    client.put_append_blob().await?;
-                    Ok(client)
+                    client.start_upload(&next).await
                 }));
                 Poll::Ready(Ok(()))
             }
