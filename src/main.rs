@@ -1,5 +1,8 @@
 use anyhow::{bail, Result};
-use azure_storage_blobs::{blob::operations::GetBlobResponse, prelude::BlobClient};
+use azure_storage_blobs::{
+    blob::operations::{AppendBlock, GetBlobResponse},
+    prelude::BlobClient,
+};
 use bytes::Bytes;
 use futures_core::Stream;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -8,7 +11,7 @@ use std::io;
 use std::pin::{pin, Pin};
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
-use tokio::io::{AsyncRead, AsyncReadExt as _, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio_util::io::StreamReader;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,12 +153,12 @@ struct GetSignedArtifactUrlRequest {
 
 #[derive(Debug, Deserialize)]
 struct CreateArtifactResponse {
-    signed_upload_url: String
+    signed_upload_url: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct GetSignedArtifactUrlResponse {
-    signed_url: String
+    signed_url: String,
 }
 
 struct GhClient {
@@ -230,10 +233,14 @@ impl GhClient {
         Ok(resp.artifacts)
     }
 
-    async fn start_download_retry(&self, backend_ids: BackendIds, name: &str) -> Result<BlobClient> {
+    async fn start_download_retry(
+        &self,
+        backend_ids: BackendIds,
+        name: &str,
+    ) -> Result<BlobClient> {
         loop {
             if let Ok(client) = self.start_download(backend_ids.clone(), name).await {
-                return Ok(client)
+                return Ok(client);
             }
         }
     }
@@ -243,7 +250,7 @@ impl GhClient {
             backend_ids,
             name: name.into(),
         };
-        let resp: GetSignedArtifactUrlResponse  = self
+        let resp: GetSignedArtifactUrlResponse = self
             .client
             .request(
                 "github.actions.results.api.v1.ArtifactService",
@@ -255,6 +262,7 @@ impl GhClient {
         Ok(BlobClient::from_sas_url(&url)?)
     }
 
+    #[allow(dead_code)]
     async fn download(&self, backend_ids: BackendIds, name: &str) -> Result<String> {
         let blob_client = self.start_download(backend_ids, name).await?;
         let content = blob_client.get_content().await?;
@@ -346,7 +354,9 @@ impl AsyncRead for GhReadSocket {
                     let remote_backend_ids = self.remote_backend_ids.clone();
                     let next = format!("{}-{}", self.unique_id, self.sequence_id);
                     self.state = GhReadSocketState::Getting(Box::pin(async move {
-                        Ok(client.start_download_retry(remote_backend_ids, &next).await?)
+                        Ok(client
+                            .start_download_retry(remote_backend_ids, &next)
+                            .await?)
                     }));
                     self.sequence_id += 1;
                     self.poll_read(cx, buf)
@@ -366,6 +376,124 @@ impl AsyncRead for GhReadSocket {
     }
 }
 
+struct PendingWrite {
+    f: AppendBlock,
+    size: usize,
+}
+
+enum GhWriteSocketState {
+    Writing {
+        client: BlobClient,
+        pending: Option<PendingWrite>,
+        bytes_written: usize,
+    },
+    Getting(Pin<Box<dyn Future<Output = Result<BlobClient>> + Send + 'static>>),
+    Flushing(Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>),
+}
+
+struct GhWriteSocket {
+    client: Arc<GhClient>,
+    unique_id: String,
+    sequence_id: u64,
+    state: GhWriteSocketState,
+}
+
+impl GhWriteSocket {
+    fn new(unique_id: String) -> Self {
+        let client = Arc::new(GhClient::new());
+        let next = format!("{unique_id}-1");
+        Self {
+            client: client.clone(),
+            unique_id,
+            sequence_id: 1,
+            state: GhWriteSocketState::Getting(Box::pin(async move {
+                let client = client.start_upload(&next).await?;
+                client.put_append_blob().await?;
+                Ok(client)
+            })),
+        }
+    }
+}
+
+impl AsyncWrite for GhWriteSocket {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        src: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match &mut self.state {
+            GhWriteSocketState::Writing {
+                client,
+                pending,
+                bytes_written,
+            } => {
+                if let Some(PendingWrite { f, size }) = pending {
+                    ready!(pin!(f).poll(cx))
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                    let write_size = *size;
+                    *bytes_written += write_size;
+                    *pending = None;
+                    Poll::Ready(Ok(write_size))
+                } else {
+                    *pending = Some(PendingWrite {
+                        f: client.append_block(src.to_owned()).into_future(),
+                        size: src.len(),
+                    });
+                    self.poll_write(cx, src)
+                }
+            }
+            GhWriteSocketState::Getting(f) => {
+                let client = ready!(pin!(f).poll(cx))
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                self.state = GhWriteSocketState::Writing {
+                    client,
+                    pending: None,
+                    bytes_written: 0,
+                };
+                self.poll_write(cx, src)
+            }
+            GhWriteSocketState::Flushing(_) => panic!("pending flush"),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut self.state {
+            GhWriteSocketState::Writing {
+                client: _,
+                pending,
+                bytes_written,
+            } => {
+                assert!(pending.is_none(), "pending write when flushing");
+                let size = *bytes_written;
+                let client = self.client.clone();
+                let next = format!("{}-{}", self.unique_id, self.sequence_id);
+                self.state = GhWriteSocketState::Flushing(Box::pin(async move {
+                    client.finish_upload(&next, size).await
+                }));
+                self.poll_flush(cx)
+            }
+            GhWriteSocketState::Flushing(f) => {
+                ready!(pin!(f).poll(cx))
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                self.sequence_id += 1;
+                let client = self.client.clone();
+                let next = format!("{}-{}", self.unique_id, self.sequence_id);
+                self.state = GhWriteSocketState::Getting(Box::pin(async move {
+                    let client = client.start_upload(&next).await?;
+                    client.put_append_blob().await?;
+                    Ok(client)
+                }));
+                Poll::Ready(Ok(()))
+            }
+            _ => panic!("pending write when flushing"),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        unimplemented!()
+    }
+}
+
 async fn wait_for_artifact(client: &GhClient, name: &str) -> Result<BackendIds> {
     loop {
         let artifacts = client.list().await?;
@@ -382,27 +510,44 @@ async fn main() {
     let client = GhClient::new();
 
     if std::env::var("ACTION").unwrap() == "1" {
+        client.upload("exchange_a", "a").await.unwrap();
+        let backend_ids = wait_for_artifact(&client, "exchange_b").await.unwrap();
+
+        let mut write_socket = GhWriteSocket::new("foo_b".into());
+        let read_socket = GhReadSocket::new(backend_ids, "foo_a".into());
+
         println!("sending ping");
-        client.upload("foo-1", "ping").await.unwrap();
+        write_socket.write_all(b"ping").await.unwrap();
+        write_socket.flush().await.unwrap();
         println!("sent ping");
 
-        let backend_ids = wait_for_artifact(&client, "foo-2").await.unwrap();
-
-        let content = client.download(backend_ids, "foo-2").await.unwrap();
+        println!("waiting for response");
+        let mut content = String::new();
+        read_socket
+            .take(4)
+            .read_to_string(&mut content)
+            .await
+            .unwrap();
         println!("received message {content:?}");
     } else {
-        let backend_ids = wait_for_artifact(&client, "foo-1").await.unwrap();
+        client.upload("exchange_b", "b").await.unwrap();
+        let backend_ids = wait_for_artifact(&client, "exchange_a").await.unwrap();
 
-        //let content = client.download(backend_ids, "foo-1").await;
+        let mut write_socket = GhWriteSocket::new("foo_b".into());
+        let read_socket = GhReadSocket::new(backend_ids, "foo_a".into());
 
-        let socket = GhReadSocket::new(backend_ids, "foo".into());
+        println!("waiting for message");
         let mut content = String::new();
-        socket.take(4).read_to_string(&mut content).await.unwrap();
-
+        read_socket
+            .take(4)
+            .read_to_string(&mut content)
+            .await
+            .unwrap();
         println!("received message {content:?}");
 
         println!("sending pong");
-        client.upload("foo-2", "pong").await.unwrap();
+        write_socket.write_all(b"ping").await.unwrap();
+        write_socket.flush().await.unwrap();
         println!("sent pong");
     }
 }
