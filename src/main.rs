@@ -522,7 +522,8 @@ async fn main() {
         let read_socket = GhReadSocket::new(backend_ids, "foo_a".into());
 
         println!("sending ping");
-        write_socket.write_all(b"ping").await.unwrap();
+        write_socket.write_all(b"pi").await.unwrap();
+        write_socket.write_all(b"ng").await.unwrap();
         write_socket.flush().await.unwrap();
         println!("sent ping");
 
