@@ -540,8 +540,8 @@ async fn main() {
         client.upload("exchange_b", "b").await.unwrap();
         let backend_ids = wait_for_artifact(&client, "exchange_a").await.unwrap();
 
-        let mut write_socket = GhWriteSocket::new("foo_b".into());
-        let read_socket = GhReadSocket::new(backend_ids, "foo_a".into());
+        let mut write_socket = GhWriteSocket::new("foo_a".into());
+        let read_socket = GhReadSocket::new(backend_ids, "foo_b".into());
 
         println!("waiting for message");
         let mut content = String::new();
