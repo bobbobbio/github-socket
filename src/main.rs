@@ -1,6 +1,15 @@
 use anyhow::{bail, Result};
-use azure_storage_blobs::prelude::BlobClient;
+use azure_storage_blobs::{blob::operations::GetBlobResponse, prelude::BlobClient};
+use bytes::Bytes;
+use futures_core::Stream;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::future::Future;
+use std::io;
+use std::pin::{pin, Pin};
+use std::sync::Arc;
+use std::task::{ready, Context, Poll};
+use tokio::io::{AsyncRead, AsyncReadExt as _, ReadBuf};
+use tokio_util::io::StreamReader;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,6 +148,16 @@ struct GetSignedArtifactUrlRequest {
     name: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct CreateArtifactResponse {
+    signed_upload_url: String
+}
+
+#[derive(Debug, Deserialize)]
+struct GetSignedArtifactUrlResponse {
+    signed_url: String
+}
+
 struct GhClient {
     client: TwirpClient,
 }
@@ -150,28 +169,26 @@ impl GhClient {
         }
     }
 
-    async fn start_upload(&self, name: &str) -> BlobClient {
+    async fn start_upload(&self, name: &str) -> Result<BlobClient> {
         let req = CreateArtifactRequest {
             backend_ids: self.client.backend_ids.clone(),
             name: name.into(),
             version: 4,
         };
-        let resp: serde_json::Value = self
+        let resp: CreateArtifactResponse = self
             .client
             .request(
                 "github.actions.results.api.v1.ArtifactService",
                 "CreateArtifact",
                 &req,
             )
-            .await
-            .unwrap();
+            .await?;
 
-        let upload_url =
-            url::Url::parse(resp.get("signed_upload_url").unwrap().as_str().unwrap()).unwrap();
-        BlobClient::from_sas_url(&upload_url).unwrap()
+        let upload_url = url::Url::parse(&resp.signed_upload_url)?;
+        Ok(BlobClient::from_sas_url(&upload_url)?)
     }
 
-    async fn finish_upload(&self, name: &str, content_length: usize) {
+    async fn finish_upload(&self, name: &str, content_length: usize) -> Result<()> {
         let req = FinalizeArtifactRequest {
             backend_ids: self.client.backend_ids.clone(),
             name: name.into(),
@@ -183,21 +200,22 @@ impl GhClient {
                 "FinalizeArtifact",
                 &req,
             )
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 
-    async fn upload(&self, name: &str, content: &str) {
-        let blob_client = self.start_upload(name).await;
+    async fn upload(&self, name: &str, content: &str) -> Result<()> {
+        let blob_client = self.start_upload(name).await?;
         blob_client
             .put_block_blob(content.to_owned())
             .content_type("text/plain")
             .await
             .unwrap();
-        self.finish_upload(name, content.len()).await;
+        self.finish_upload(name, content.len()).await?;
+        Ok(())
     }
 
-    async fn list(&self) -> Vec<Artifact> {
+    async fn list(&self) -> Result<Vec<Artifact>> {
         let req = ListArtifactsRequest {
             backend_ids: self.client.backend_ids.clone(),
         };
@@ -208,46 +226,33 @@ impl GhClient {
                 "ListArtifacts",
                 &req,
             )
-            .await
-            .unwrap();
-        resp.artifacts
+            .await?;
+        Ok(resp.artifacts)
     }
 
-    async fn start_download(&self, backend_ids: BackendIds, name: &str) -> BlobClient {
+    async fn start_download(&self, backend_ids: BackendIds, name: &str) -> Result<BlobClient> {
         let req = GetSignedArtifactUrlRequest {
             backend_ids,
             name: name.into(),
         };
-        let resp = self
+        let resp: GetSignedArtifactUrlResponse  = self
             .client
-            .request::<_, serde_json::Value>(
+            .request(
                 "github.actions.results.api.v1.ArtifactService",
                 "GetSignedArtifactURL",
                 &req,
             )
-            .await
-            .unwrap();
-        let url = url::Url::parse(resp.get("signed_url").unwrap().as_str().unwrap()).unwrap();
-        BlobClient::from_sas_url(&url).unwrap()
+            .await?;
+        let url = url::Url::parse(&resp.signed_url)?;
+        Ok(BlobClient::from_sas_url(&url)?)
     }
 
-    async fn download(&self, backend_ids: BackendIds, name: &str) -> String {
-        let blob_client = self.start_download(backend_ids, name).await;
-        let content = blob_client.get_content().await.unwrap();
-        String::from_utf8_lossy(&content[..]).into()
+    async fn download(&self, backend_ids: BackendIds, name: &str) -> Result<String> {
+        let blob_client = self.start_download(backend_ids, name).await?;
+        let content = blob_client.get_content().await?;
+        Ok(String::from_utf8_lossy(&content[..]).into())
     }
 }
-
-use azure_storage_blobs::blob::operations::GetBlobResponse;
-use bytes::Bytes;
-use futures_core::Stream;
-use std::future::Future;
-use std::io;
-use std::pin::{pin, Pin};
-use std::sync::Arc;
-use std::task::{ready, Context, Poll};
-use tokio::io::{AsyncRead, AsyncReadExt as _, ReadBuf};
-use tokio_util::io::StreamReader;
 
 struct BlobBytesStream {
     response_body_stream: azure_core::Pageable<GetBlobResponse, azure_core::Error>,
@@ -313,7 +318,7 @@ impl GhReadSocket {
             state: GhReadSocketState::Getting(Box::pin(async move {
                 Ok(client
                     .start_download(remote_backend_ids, &format!("{unique_id}-1"))
-                    .await)
+                    .await?)
             })),
         }
     }
@@ -333,7 +338,7 @@ impl AsyncRead for GhReadSocket {
                     let remote_backend_ids = self.remote_backend_ids.clone();
                     let next = format!("{}-{}", self.unique_id, self.sequence_id);
                     self.state = GhReadSocketState::Getting(Box::pin(async move {
-                        Ok(client.start_download(remote_backend_ids, &next).await)
+                        Ok(client.start_download(remote_backend_ids, &next).await?)
                     }));
                     self.sequence_id += 1;
                     self.poll_read(cx, buf)
@@ -353,11 +358,11 @@ impl AsyncRead for GhReadSocket {
     }
 }
 
-async fn wait_for_artifact(client: &GhClient, name: &str) -> BackendIds {
+async fn wait_for_artifact(client: &GhClient, name: &str) -> Result<BackendIds> {
     loop {
-        let artifacts = client.list().await;
+        let artifacts = client.list().await?;
         if let Some(artifact) = artifacts.iter().find(|a| a.name == name) {
-            return artifact.backend_ids.clone();
+            return Ok(artifact.backend_ids.clone());
         } else {
             println!("waiting for {name}");
         }
@@ -370,15 +375,15 @@ async fn main() {
 
     if std::env::var("ACTION").unwrap() == "1" {
         println!("sending ping");
-        client.upload("foo-1", "ping").await;
+        client.upload("foo-1", "ping").await.unwrap();
         println!("sent ping");
 
-        let backend_ids = wait_for_artifact(&client, "foo-2").await;
+        let backend_ids = wait_for_artifact(&client, "foo-2").await.unwrap();
 
-        let content = client.download(backend_ids, "foo-2").await;
+        let content = client.download(backend_ids, "foo-2").await.unwrap();
         println!("received message {content:?}");
     } else {
-        let backend_ids = wait_for_artifact(&client, "foo-1").await;
+        let backend_ids = wait_for_artifact(&client, "foo-1").await.unwrap();
 
         //let content = client.download(backend_ids, "foo-1").await;
 
@@ -389,7 +394,7 @@ async fn main() {
         println!("received message {content:?}");
 
         println!("sending pong");
-        client.upload("foo-2", "pong").await;
+        client.upload("foo-2", "pong").await.unwrap();
         println!("sent pong");
     }
 }
