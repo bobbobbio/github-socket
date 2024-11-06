@@ -339,7 +339,7 @@ impl GhReadSocket {
                     .start_download_retry(remote_backend_ids, &format!("{unique_id}-1"))
                     .await?;
                 println!("received blob client");
-                Ok(client)
+                Ok(bc)
             })),
         }
     }
