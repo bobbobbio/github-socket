@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use azure_storage_blobs::prelude::BlobClient;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -246,24 +247,24 @@ impl GhClient {
 }
 
 struct GhReadSocket {
-    client: GhClient,
+    client: Arc<GhClient>,
     remote_backend_ids: BackendIds,
-    unique_id: String,
+    key: String,
     sequence_id: u64,
 }
 
 impl GhReadSocket {
-    fn new(remote_backend_ids: BackendIds, unique_id: String) -> Self {
+    fn new(client: Arc<GhClient>, remote_backend_ids: BackendIds, key: String) -> Self {
         Self {
-            client: GhClient::new(),
+            client,
             remote_backend_ids: remote_backend_ids.clone(),
-            unique_id: unique_id.clone(),
+            key,
             sequence_id: 1,
         }
     }
 
     async fn read_msg(&mut self) -> Result<String> {
-        let next = format!("{}-{}", &self.unique_id, &self.sequence_id);
+        let next = format!("{}-{}", &self.key, &self.sequence_id);
         self.sequence_id += 1;
         loop {
             if let Ok(content) = self
@@ -278,22 +279,22 @@ impl GhReadSocket {
 }
 
 struct GhWriteSocket {
-    client: GhClient,
-    unique_id: String,
+    client: Arc<GhClient>,
+    key: String,
     sequence_id: u64,
 }
 
 impl GhWriteSocket {
-    fn new(unique_id: String) -> Self {
+    fn new(client: Arc<GhClient>, key: String) -> Self {
         Self {
-            client: GhClient::new(),
-            unique_id,
+            client,
+            key,
             sequence_id: 1,
         }
     }
 
     async fn send_msg(&mut self, content: &str) -> Result<()> {
-        let next = format!("{}-{}", &self.unique_id, &self.sequence_id);
+        let next = format!("{}-{}", &self.key, &self.sequence_id);
         self.client.upload(&next, content).await?;
         self.sequence_id += 1;
         Ok(())
@@ -311,37 +312,62 @@ async fn wait_for_artifact(client: &GhClient, name: &str) -> Result<BackendIds> 
     }
 }
 
+struct GhSocket {
+    read: GhReadSocket,
+    write: GhWriteSocket,
+}
+
+impl GhSocket {
+    async fn connect(key: &str) -> Result<Self> {
+        let client = Arc::new(GhClient::new());
+        client.upload(&format!("{key}-connect"), " ").await?;
+        let backend_ids = wait_for_artifact(&client, &format!("{key}-listen")).await?;
+        Ok(Self {
+            read: GhReadSocket::new(client.clone(), backend_ids, key.into()),
+            write: GhWriteSocket::new(client, key.into()),
+        })
+    }
+
+    async fn listen(key: &str) -> Result<Self> {
+        let client = Arc::new(GhClient::new());
+        client.upload(&format!("{key}-listen"), " ").await?;
+        let backend_ids = wait_for_artifact(&client, &format!("{key}-connect")).await?;
+        Ok(Self {
+            read: GhReadSocket::new(client.clone(), backend_ids, key.into()),
+            write: GhWriteSocket::new(client, key.into()),
+        })
+    }
+
+    async fn read_msg(&mut self) -> Result<String> {
+        self.read.read_msg().await
+    }
+
+    async fn send_msg(&mut self, content: &str) -> Result<()> {
+        self.write.send_msg(content).await
+    }
+}
+
 #[tokio::main]
 async fn main() {
-    let client = GhClient::new();
-
     if std::env::var("ACTION").unwrap() == "1" {
-        client.upload("exchange_a", "a").await.unwrap();
-        let backend_ids = wait_for_artifact(&client, "exchange_b").await.unwrap();
-
-        let mut write_socket = GhWriteSocket::new("foo_b".into());
-        let mut read_socket = GhReadSocket::new(backend_ids, "foo_a".into());
+        let mut socket = GhSocket::listen("foo").await.unwrap();
 
         println!("sending ping");
-        write_socket.send_msg("ping").await.unwrap();
+        socket.send_msg("ping").await.unwrap();
         println!("sent ping");
 
         println!("waiting for response");
-        let content = read_socket.read_msg().await.unwrap();
+        let content = socket.read_msg().await.unwrap();
         println!("received message {content:?}");
     } else {
-        client.upload("exchange_b", "b").await.unwrap();
-        let backend_ids = wait_for_artifact(&client, "exchange_a").await.unwrap();
-
-        let mut write_socket = GhWriteSocket::new("foo_a".into());
-        let mut read_socket = GhReadSocket::new(backend_ids, "foo_b".into());
+        let mut socket = GhSocket::connect("foo").await.unwrap();
 
         println!("waiting for message");
-        let content = read_socket.read_msg().await.unwrap();
+        let content = socket.read_msg().await.unwrap();
         println!("received message {content:?}");
 
         println!("sending pong");
-        write_socket.send_msg("ping").await.unwrap();
+        socket.send_msg("ping").await.unwrap();
         println!("sent pong");
     }
 }
