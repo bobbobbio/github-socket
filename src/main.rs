@@ -196,11 +196,11 @@ impl GhClient {
         Ok(())
     }
 
-    async fn upload(&self, name: &str, content: &str) -> Result<()> {
+    async fn upload(&self, name: &str, content: &[u8]) -> Result<()> {
         let blob_client = self.start_upload(name).await?;
         blob_client
             .put_block_blob(content.to_owned())
-            .content_type("text/plain")
+            .content_type("application/octet-stream")
             .await?;
         self.finish_upload(name, content.len()).await?;
         Ok(())
@@ -238,11 +238,10 @@ impl GhClient {
         Ok(BlobClient::from_sas_url(&url)?)
     }
 
-    #[allow(dead_code)]
-    async fn download(&self, backend_ids: BackendIds, name: &str) -> Result<String> {
+    async fn download(&self, backend_ids: BackendIds, name: &str) -> Result<Vec<u8>> {
         let blob_client = self.start_download(backend_ids, name).await?;
         let content = blob_client.get_content().await?;
-        Ok(String::from_utf8_lossy(&content[..]).into())
+        Ok(content.into())
     }
 }
 
@@ -263,7 +262,7 @@ impl GhReadSocket {
         }
     }
 
-    async fn read_msg(&mut self) -> Result<String> {
+    async fn read_msg(&mut self) -> Result<Vec<u8>> {
         let next = format!("{}-{}", &self.key, &self.sequence_id);
         self.sequence_id += 1;
         loop {
@@ -293,7 +292,7 @@ impl GhWriteSocket {
         }
     }
 
-    async fn send_msg(&mut self, content: &str) -> Result<()> {
+    async fn send_msg(&mut self, content: &[u8]) -> Result<()> {
         let next = format!("{}-{}", &self.key, &self.sequence_id);
         self.client.upload(&next, content).await?;
         self.sequence_id += 1;
@@ -320,7 +319,7 @@ struct GhSocket {
 impl GhSocket {
     async fn connect(key: &str) -> Result<Self> {
         let client = Arc::new(GhClient::new());
-        client.upload(&format!("{key}-connect"), " ").await?;
+        client.upload(&format!("{key}-connect"), b" ").await?;
         let backend_ids = wait_for_artifact(&client, &format!("{key}-listen")).await?;
         Ok(Self {
             read: GhReadSocket::new(client.clone(), backend_ids, format!("{key}-down")),
@@ -330,7 +329,7 @@ impl GhSocket {
 
     async fn listen(key: &str) -> Result<Self> {
         let client = Arc::new(GhClient::new());
-        client.upload(&format!("{key}-listen"), " ").await?;
+        client.upload(&format!("{key}-listen"), b" ").await?;
         let backend_ids = wait_for_artifact(&client, &format!("{key}-connect")).await?;
         Ok(Self {
             read: GhReadSocket::new(client.clone(), backend_ids, format!("{key}-up")),
@@ -338,11 +337,11 @@ impl GhSocket {
         })
     }
 
-    async fn read_msg(&mut self) -> Result<String> {
+    async fn read_msg(&mut self) -> Result<Vec<u8>> {
         self.read.read_msg().await
     }
 
-    async fn send_msg(&mut self, content: &str) -> Result<()> {
+    async fn send_msg(&mut self, content: &[u8]) -> Result<()> {
         self.write.send_msg(content).await
     }
 }
@@ -353,21 +352,23 @@ async fn main() {
         let mut socket = GhSocket::listen("foo").await.unwrap();
 
         println!("sending ping");
-        socket.send_msg("ping").await.unwrap();
+        socket.send_msg(&[1; 1024 * 1024]).await.unwrap();
         println!("sent ping");
 
         println!("waiting for response");
         let content = socket.read_msg().await.unwrap();
-        println!("received message {content:?}");
+        assert!(content.iter().all(|b| *b == 2));
+        println!("received response of length {}", content.len());
     } else {
         let mut socket = GhSocket::connect("foo").await.unwrap();
 
         println!("waiting for message");
         let content = socket.read_msg().await.unwrap();
-        println!("received message {content:?}");
+        assert!(content.iter().all(|b| *b == 1));
+        println!("received message of length {}", content.len());
 
         println!("sending pong");
-        socket.send_msg("pong").await.unwrap();
+        socket.send_msg(&[2; 1024 * 1024]).await.unwrap();
         println!("sent pong");
     }
 }
