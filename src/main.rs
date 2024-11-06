@@ -367,7 +367,7 @@ async fn main() {
         println!("received message {content:?}");
 
         println!("sending pong");
-        socket.send_msg("ping").await.unwrap();
+        socket.send_msg("pong").await.unwrap();
         println!("sent pong");
     }
 }
