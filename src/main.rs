@@ -377,7 +377,8 @@ async fn job_two() {
 async fn job_one_experiment() {
     let client = GhClient::new();
     let b_client = client.start_upload("foo").await.unwrap();
-    b_client.put_block_blob(&b"abcdefg"[..]).await.unwrap();
+    b_client.put_append_blob().await.unwrap();
+    b_client.append_block(&b"abcdefg"[..]).await.unwrap();
     client.finish_upload("foo", 7).await.unwrap();
 
     b_client.append_block(&b"hijklmn"[..]).await.unwrap();
