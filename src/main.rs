@@ -392,15 +392,26 @@ async fn job_two_experiment() {
     use futures_util::stream::StreamExt as _;
     let client = GhClient::new();
     let backend_ids = wait_for_artifact(&client, "foo").await.unwrap();
+    let mut next = 0;
+    let mut etag: Option<azure_core::Etag> = None;
     loop {
         let b_client = client
             .start_download(backend_ids.clone(), "foo")
             .await
             .unwrap();
 
-        let mut stream = b_client.get().into_stream();
-        while let Some(r) = stream.next().await {
-            println!("{r:#?}");
+        let mut builder = b_client.get().range(next..);
+        if let Some(etag) = &etag {
+            builder = builder.if_match(azure_core::request_options::IfMatchCondition::NotMatch(
+                etag.to_string(),
+            ));
+        }
+        let mut stream = builder.into_stream();
+        if let Ok(resp) = stream.next().await.unwrap() {
+            etag = Some(resp.blob.properties.etag);
+            let msg = resp.data.collect().await.unwrap();
+            println!("got message = {next}: {msg:?}");
+            next += msg.len();
         }
     }
 }
