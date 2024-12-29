@@ -374,34 +374,22 @@ async fn job_two() {
     println!("sent pong");
 }
 
-const CHUNK_A: [u8; 512] = [b'a'; 512];
-const CHUNK_B: [u8; 512] = [b'b'; 512];
-const CHUNK_C: [u8; 512] = [b'c'; 512];
-
 async fn job_one_experiment() {
     let client = GhClient::new();
+
     let b_client = client.start_upload("foo").await.unwrap();
-    b_client.put_page_blob(1024).await.unwrap();
-    b_client
-        .put_page((0, 511).try_into().unwrap(), &CHUNK_A[..])
-        .await
-        .unwrap();
-    client.finish_upload("foo", 1024).await.unwrap();
+    b_client.put_append_blob().await.unwrap();
+    b_client.append_block(&b"abc"[..]).await.unwrap();
+    client.finish_upload("foo", 3).await.unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-    b_client
-        .put_page((512, 1023).try_into().unwrap(), &CHUNK_B[..])
-        .await
-        .unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-    b_client
-        .put_page((0, 511).try_into().unwrap(), &CHUNK_C[..])
-        .await
-        .unwrap();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        b_client.append_block(&b"def"[..]).await.unwrap();
+    }
 }
 
 async fn job_two_experiment() {
+    use futures_util::stream::StreamExt as _;
     let client = GhClient::new();
     let backend_ids = wait_for_artifact(&client, "foo").await.unwrap();
     loop {
@@ -410,8 +398,10 @@ async fn job_two_experiment() {
             .await
             .unwrap();
 
-        let ranges = b_client.get_page_ranges().await;
-        println!("page_ranges = {ranges:?}");
+        let mut stream = b_client.get().into_stream();
+        while let Some(r) = stream.next().await {
+            println!("{r:#?}");
+        }
     }
 }
 
