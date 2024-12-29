@@ -383,20 +383,20 @@ async fn job_one_experiment() {
     let b_client = client.start_upload("foo").await.unwrap();
     b_client.put_page_blob(1024).await.unwrap();
     b_client
-        .put_page((0, 512).try_into().unwrap(), &CHUNK_A[..])
+        .put_page((0, 511).try_into().unwrap(), &CHUNK_A[..])
         .await
         .unwrap();
     client.finish_upload("foo", 1024).await.unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     b_client
-        .put_page((512, 1024).try_into().unwrap(), &CHUNK_B[..])
+        .put_page((512, 1023).try_into().unwrap(), &CHUNK_B[..])
         .await
         .unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     b_client
-        .put_page((0, 512).try_into().unwrap(), &CHUNK_C[..])
+        .put_page((0, 511).try_into().unwrap(), &CHUNK_C[..])
         .await
         .unwrap();
 }
