@@ -381,6 +381,7 @@ async fn job_one_experiment() {
     b_client.append_block(&b"abcdefg"[..]).await.unwrap();
     client.finish_upload("foo", 7).await.unwrap();
 
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     b_client.append_block(&b"hijklmn"[..]).await.unwrap();
 }
 
@@ -389,7 +390,12 @@ async fn job_two_experiment() {
     let backend_ids = wait_for_artifact(&client, "foo").await.unwrap();
     loop {
         let msg = client.download(backend_ids.clone(), "foo").await.unwrap();
-        println!("go {}", String::from_utf8_lossy(&msg));
+        let s = String::from_utf8_lossy(&msg);
+        println!("got {}", s);
+
+        if s == "abcdefghijklmn" {
+            break;
+        }
     }
 }
 
