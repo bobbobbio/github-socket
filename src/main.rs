@@ -346,6 +346,7 @@ impl GhSocket {
     }
 }
 
+#[expect(dead_code)]
 async fn job_one() {
     let mut socket = GhSocket::listen("foo").await.unwrap();
 
@@ -359,6 +360,7 @@ async fn job_one() {
     println!("received response of length {}", content.len());
 }
 
+#[expect(dead_code)]
 async fn job_two() {
     let mut socket = GhSocket::connect("foo").await.unwrap();
 
@@ -372,11 +374,29 @@ async fn job_two() {
     println!("sent pong");
 }
 
+async fn job_one_experiment() {
+    let client = GhClient::new();
+    let b_client = client.start_upload("foo").await.unwrap();
+    b_client.append_block(&b"abcdefg"[..]).await.unwrap();
+    client.finish_upload("foo", 7).await.unwrap();
+
+    b_client.append_block(&b"hijklmn"[..]).await.unwrap();
+}
+
+async fn job_two_experiment() {
+    let client = GhClient::new();
+    let backend_ids = wait_for_artifact(&client, "foo").await.unwrap();
+    loop {
+        let msg = client.download(backend_ids.clone(), "foo").await.unwrap();
+        println!("go {}", String::from_utf8_lossy(&msg));
+    }
+}
+
 #[tokio::main]
 async fn main() {
     if std::env::var("ACTION").unwrap() == "1" {
-        job_one().await;
+        job_one_experiment().await;
     } else {
-        job_two().await;
+        job_two_experiment().await;
     }
 }
