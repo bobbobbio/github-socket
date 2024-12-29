@@ -346,29 +346,37 @@ impl GhSocket {
     }
 }
 
+async fn job_one() {
+    let mut socket = GhSocket::listen("foo").await.unwrap();
+
+    println!("sending ping");
+    socket.send_msg(&[1; 1024 * 1024]).await.unwrap();
+    println!("sent ping");
+
+    println!("waiting for response");
+    let content = socket.read_msg().await.unwrap();
+    assert!(content.iter().all(|b| *b == 2));
+    println!("received response of length {}", content.len());
+}
+
+async fn job_two() {
+    let mut socket = GhSocket::connect("foo").await.unwrap();
+
+    println!("waiting for message");
+    let content = socket.read_msg().await.unwrap();
+    assert!(content.iter().all(|b| *b == 1));
+    println!("received message of length {}", content.len());
+
+    println!("sending pong");
+    socket.send_msg(&[2; 1024 * 1024]).await.unwrap();
+    println!("sent pong");
+}
+
 #[tokio::main]
 async fn main() {
     if std::env::var("ACTION").unwrap() == "1" {
-        let mut socket = GhSocket::listen("foo").await.unwrap();
-
-        println!("sending ping");
-        socket.send_msg(&[1; 1024 * 1024]).await.unwrap();
-        println!("sent ping");
-
-        println!("waiting for response");
-        let content = socket.read_msg().await.unwrap();
-        assert!(content.iter().all(|b| *b == 2));
-        println!("received response of length {}", content.len());
+        job_one().await;
     } else {
-        let mut socket = GhSocket::connect("foo").await.unwrap();
-
-        println!("waiting for message");
-        let content = socket.read_msg().await.unwrap();
-        assert!(content.iter().all(|b| *b == 1));
-        println!("received message of length {}", content.len());
-
-        println!("sending pong");
-        socket.send_msg(&[2; 1024 * 1024]).await.unwrap();
-        println!("sent pong");
+        job_two().await;
     }
 }
