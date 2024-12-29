@@ -374,15 +374,31 @@ async fn job_two() {
     println!("sent pong");
 }
 
+const CHUNK_A: [u8; 512] = [b'a'; 512];
+const CHUNK_B: [u8; 512] = [b'b'; 512];
+const CHUNK_C: [u8; 512] = [b'c'; 512];
+
 async fn job_one_experiment() {
     let client = GhClient::new();
     let b_client = client.start_upload("foo").await.unwrap();
-    b_client.put_append_blob().await.unwrap();
-    b_client.append_block(&b"abcdefg"[..]).await.unwrap();
-    client.finish_upload("foo", 7).await.unwrap();
+    b_client.put_page_blob(1024).await.unwrap();
+    b_client
+        .put_page((0, 512).try_into().unwrap(), &CHUNK_A[..])
+        .await
+        .unwrap();
+    client.finish_upload("foo", 1024).await.unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-    b_client.append_block(&b"hijklmn"[..]).await.unwrap();
+    b_client
+        .put_page((512, 1024).try_into().unwrap(), &CHUNK_B[..])
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    b_client
+        .put_page((0, 512).try_into().unwrap(), &CHUNK_C[..])
+        .await
+        .unwrap();
 }
 
 async fn job_two_experiment() {
@@ -392,10 +408,6 @@ async fn job_two_experiment() {
         let msg = client.download(backend_ids.clone(), "foo").await.unwrap();
         let s = String::from_utf8_lossy(&msg);
         println!("got {}", s);
-
-        if s == "abcdefghijklmn" {
-            break;
-        }
     }
 }
 
