@@ -405,9 +405,13 @@ async fn job_two_experiment() {
     let client = GhClient::new();
     let backend_ids = wait_for_artifact(&client, "foo").await.unwrap();
     loop {
-        let msg = client.download(backend_ids.clone(), "foo").await.unwrap();
-        let s = String::from_utf8_lossy(&msg);
-        println!("got {}", s);
+        let b_client = client
+            .start_download(backend_ids.clone(), "foo")
+            .await
+            .unwrap();
+
+        let ranges = b_client.get_page_ranges().await;
+        println!("page_ranges = {ranges:?}");
     }
 }
 
