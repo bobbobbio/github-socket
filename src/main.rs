@@ -305,8 +305,8 @@ impl GhReadSocket {
                 match err.kind() {
                     ErrorKind::HttpResponse {
                         status: StatusCode::NotModified,
-                        ..
-                    } => {
+                        error_code: Some(error_code),
+                    } if error_code == "ConditionNotMet" => {
                         return Ok(None);
                     }
                     _ => {}
