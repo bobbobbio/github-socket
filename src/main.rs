@@ -336,6 +336,11 @@ impl GhWriteSocket {
     }
 }
 
+async fn wait_for_artifact(client: &GhClient, key: &str) -> Result<()> {
+    while !client.list().await?.iter().any(|a| &a.name == key) {}
+    Ok(())
+}
+
 struct GhSocket {
     read: GhReadSocket,
     write: GhWriteSocket,
@@ -354,18 +359,35 @@ impl GhSocket {
         })
     }
 
-    async fn connect(client: &GhClient, id: &str) -> Result<Self> {
+    async fn maybe_connect(client: &GhClient, id: &str) -> Result<Option<Self>> {
         let artifacts = client.list().await?;
-        let listener = artifacts
+        if let Some(listener) = artifacts
             .iter()
             .find(|a| &a.name == &format!("{id}-listen"))
-            .ok_or_else(|| anyhow!("nobody listening on {id:?}"))?;
-        let Artifact { name, backend_ids } = listener;
-        let key = name.strip_suffix("-listen").unwrap();
-        let self_id = "random_id";
-        let read_key = format!("{key}-{self_id}-down");
-        let write_key = format!("{key}-{self_id}-up");
-        Ok(Self::new(client, backend_ids.clone(), &read_key, &write_key).await?)
+        {
+            let Artifact { name, backend_ids } = listener;
+            let key = name.strip_suffix("-listen").unwrap();
+            let self_id = "random_id";
+
+            let write_key = format!("{key}-{self_id}-up");
+            let write = GhWriteSocket::new(client, &write_key).await?;
+
+            let read_key = format!("{key}-{self_id}-down");
+            wait_for_artifact(client, &read_key).await?;
+            let read = GhReadSocket::new(client, backend_ids.clone(), &read_key).await?;
+
+            Ok(Some(Self { write, read }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn connect(client: &GhClient, id: &str) -> Result<Self> {
+        loop {
+            if let Some(socket) = Self::maybe_connect(client, id).await? {
+                return Ok(socket);
+            }
+        }
     }
 
     async fn read_msg(&mut self) -> Result<Vec<u8>> {
