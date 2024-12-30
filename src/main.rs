@@ -325,20 +325,36 @@ impl GhReadSocket {
     }
 }
 
+struct GhWriteSocket {
+    blob: BlobClient,
+}
+
+impl GhWriteSocket {
+    async fn new(client: &GhClient, key: &str) -> Result<Self> {
+        let blob = client.start_upload(key).await?;
+        blob.put_append_blob().await?;
+        client.finish_upload(key, 0).await?;
+        Ok(Self { blob })
+    }
+
+    async fn write_msg(&mut self, data: &[u8]) -> Result<()> {
+        self.blob.append_block(data.to_owned()).await?;
+        Ok(())
+    }
+}
+
 async fn job_one_experiment() {
     let client = GhClient::new();
+    let mut write_sock = GhWriteSocket::new(&client, "foo").await.unwrap();
 
-    let b_client = client.start_upload("foo").await.unwrap();
-    b_client.put_append_blob().await.unwrap();
-    b_client.append_block(&b"abc"[..]).await.unwrap();
-    client.finish_upload("foo", 3).await.unwrap();
+    write_sock.write_msg(&b"abc"[..]).await.unwrap();
 
     for _ in 0..3 {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        b_client.append_block(&b"def"[..]).await.unwrap();
+        write_sock.write_msg(&b"def"[..]).await.unwrap();
     }
 
-    b_client.append_block(&b"done"[..]).await.unwrap();
+    write_sock.write_msg(&b"done"[..]).await.unwrap();
 }
 
 async fn job_two_experiment() {
