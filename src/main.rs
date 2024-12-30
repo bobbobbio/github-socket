@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use azure_storage_blobs::prelude::BlobClient;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -195,7 +196,6 @@ impl GhClient {
         Ok(())
     }
 
-    #[expect(dead_code)]
     async fn upload(&self, name: &str, content: &[u8]) -> Result<()> {
         let blob_client = self.start_upload(name).await?;
         blob_client
@@ -246,17 +246,6 @@ impl GhClient {
     }
 }
 
-async fn wait_for_artifact(client: &GhClient, name: &str) -> Result<BackendIds> {
-    loop {
-        let artifacts = client.list().await?;
-        if let Some(artifact) = artifacts.iter().find(|a| a.name == name) {
-            return Ok(artifact.backend_ids.clone());
-        } else {
-            println!("waiting for {name}");
-        }
-    }
-}
-
 struct GhReadSocket {
     blob: BlobClient,
     index: usize,
@@ -264,9 +253,7 @@ struct GhReadSocket {
 }
 
 impl GhReadSocket {
-    async fn new(client: &GhClient, key: &str) -> Result<Self> {
-        let backend_ids = wait_for_artifact(client, key).await?;
-
+    async fn new(client: &GhClient, backend_ids: BackendIds, key: &str) -> Result<Self> {
         let blob = client.start_download(backend_ids, key).await?;
         Ok(Self {
             blob,
@@ -355,11 +342,30 @@ struct GhSocket {
 }
 
 impl GhSocket {
-    async fn new(client: &GhClient, read_key: &str, write_key: &str) -> Result<Self> {
+    async fn new(
+        client: &GhClient,
+        read_backend_ids: BackendIds,
+        read_key: &str,
+        write_key: &str,
+    ) -> Result<Self> {
         Ok(Self {
             write: GhWriteSocket::new(client, write_key).await?,
-            read: GhReadSocket::new(client, read_key).await?,
+            read: GhReadSocket::new(client, read_backend_ids, read_key).await?,
         })
+    }
+
+    async fn connect(client: &GhClient, id: &str) -> Result<Self> {
+        let artifacts = client.list().await?;
+        let listener = artifacts
+            .iter()
+            .find(|a| &a.name == &format!("{id}-listen"))
+            .ok_or_else(|| anyhow!("nobody listening on {id:?}"))?;
+        let Artifact { name, backend_ids } = listener;
+        let key = name.strip_suffix("-listen").unwrap();
+        let self_id = "random_id";
+        let read_key = format!("{key}-{self_id}-down");
+        let write_key = format!("{key}-{self_id}-up");
+        Ok(Self::new(client, backend_ids.clone(), &read_key, &write_key).await?)
     }
 
     async fn read_msg(&mut self) -> Result<Vec<u8>> {
@@ -371,9 +377,56 @@ impl GhSocket {
     }
 }
 
+struct GhListener {
+    id: String,
+    accepted: HashSet<String>,
+}
+
+impl GhListener {
+    async fn new(client: &GhClient, id: &str) -> Result<Self> {
+        let key = format!("{id}-listen");
+        client.upload(&key, &[]).await?;
+        Ok(Self {
+            id: id.into(),
+            accepted: HashSet::new(),
+        })
+    }
+
+    async fn maybe_accept_one(&mut self, client: &GhClient) -> Result<Option<GhSocket>> {
+        let artifacts = client.list().await?;
+        if let Some(connected) = artifacts.iter().find(|a| {
+            a.name.ends_with(&format!("{}-up", self.id)) && !self.accepted.contains(&a.name)
+        }) {
+            let Artifact { name, backend_ids } = connected;
+            let key = name.strip_suffix("-up").unwrap();
+            let socket = GhSocket::new(
+                client,
+                backend_ids.clone(),
+                &format!("{key}-up"),
+                &format!("{key}-down"),
+            )
+            .await?;
+            self.accepted.insert(name.into());
+            Ok(Some(socket))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn accept_one(&mut self, client: &GhClient) -> Result<GhSocket> {
+        loop {
+            if let Some(socket) = self.maybe_accept_one(client).await? {
+                return Ok(socket);
+            }
+        }
+    }
+}
+
 async fn job_one_experiment() {
     let client = GhClient::new();
-    let mut sock = GhSocket::new(&client, "foo-a", "foo-b").await.unwrap();
+    let mut listener = GhListener::new(&client, "foo").await.unwrap();
+
+    let mut sock = listener.accept_one(&client).await.unwrap();
 
     for _ in 0..3 {
         println!("sending ping");
@@ -392,7 +445,7 @@ async fn job_one_experiment() {
 
 async fn job_two_experiment() {
     let client = GhClient::new();
-    let mut sock = GhSocket::new(&client, "foo-b", "foo-a").await.unwrap();
+    let mut sock = GhSocket::connect(&client, "foo").await.unwrap();
     loop {
         let msg = sock.read_msg().await.unwrap();
         let msg_str = String::from_utf8_lossy(&msg);
