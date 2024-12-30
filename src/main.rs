@@ -333,10 +333,12 @@ async fn job_one_experiment() {
     b_client.append_block(&b"abc"[..]).await.unwrap();
     client.finish_upload("foo", 3).await.unwrap();
 
-    loop {
+    for _ in 0..3 {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         b_client.append_block(&b"def"[..]).await.unwrap();
     }
+
+    b_client.append_block(&b"done"[..]).await.unwrap();
 }
 
 async fn job_two_experiment() {
@@ -344,7 +346,11 @@ async fn job_two_experiment() {
     let mut read_sock = GhReadSocket::new(&client, "foo").await.unwrap();
     loop {
         let msg = read_sock.read_msg().await.unwrap();
-        println!("got message = {msg:?}");
+        let msg_str = String::from_utf8_lossy(&msg);
+        println!("got message = {msg_str:?}");
+        if msg_str == "done" {
+            break;
+        }
     }
 }
 
