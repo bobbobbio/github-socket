@@ -8,7 +8,7 @@ jobs:
   test:
     strategy:
       matrix:
-        action: [1, 2]
+        action: [1, 2, 3, 4]
     name: Test A
     runs-on: ubuntu-latest
     steps:

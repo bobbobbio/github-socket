@@ -367,7 +367,7 @@ impl GhSocket {
         {
             let Artifact { name, backend_ids } = listener;
             let key = name.strip_suffix("-listen").unwrap();
-            let self_id = "random_id";
+            let self_id = uuid::Uuid::new_v4().to_string();
 
             let write_key = format!("{self_id}-{key}-up");
             let write = GhWriteSocket::new(client, &write_key).await?;
@@ -444,28 +444,36 @@ impl GhListener {
     }
 }
 
-async fn job_one_experiment() {
+async fn listener() {
     let client = GhClient::new();
     let mut listener = GhListener::new(&client, "foo").await.unwrap();
 
-    let mut sock = listener.accept_one(&client).await.unwrap();
-
+    let mut handles = vec![];
     for _ in 0..3 {
-        println!("sending ping");
-        sock.write_msg(&b"ping"[..]).await.unwrap();
+        let mut sock = listener.accept_one(&client).await.unwrap();
+        handles.push(tokio::task::spawn(async move {
+            for _ in 0..3 {
+                println!("sending ping");
+                sock.write_msg(&b"ping"[..]).await.unwrap();
 
-        println!("waiting for response");
-        let msg = sock.read_msg().await.unwrap();
-        let msg_str = String::from_utf8_lossy(&msg);
-        println!("got {msg_str:?}");
+                println!("waiting for response");
+                let msg = sock.read_msg().await.unwrap();
+                let msg_str = String::from_utf8_lossy(&msg);
+                println!("got {msg_str:?}");
 
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+
+            sock.write_msg(&b"done"[..]).await.unwrap();
+        }));
     }
 
-    sock.write_msg(&b"done"[..]).await.unwrap();
+    for h in handles {
+        h.await.unwrap();
+    }
 }
 
-async fn job_two_experiment() {
+async fn connector() {
     let client = GhClient::new();
     let mut sock = GhSocket::connect(&client, "foo").await.unwrap();
     loop {
@@ -484,8 +492,8 @@ async fn job_two_experiment() {
 #[tokio::main]
 async fn main() {
     if std::env::var("ACTION").unwrap() == "1" {
-        job_one_experiment().await;
+        listener().await;
     } else {
-        job_two_experiment().await;
+        connector().await;
     }
 }

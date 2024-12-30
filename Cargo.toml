@@ -17,3 +17,4 @@ serde_json = "*"
 tokio = { version = "*", features = ["rt-multi-thread", "macros"] }
 tokio-util = "*"
 url = "*"
+uuid = "1.11.0"
