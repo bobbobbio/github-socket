@@ -369,10 +369,10 @@ impl GhSocket {
             let key = name.strip_suffix("-listen").unwrap();
             let self_id = "random_id";
 
-            let write_key = format!("{key}-{self_id}-up");
+            let write_key = format!("{self_id}-{key}-up");
             let write = GhWriteSocket::new(client, &write_key).await?;
 
-            let read_key = format!("{key}-{self_id}-down");
+            let read_key = format!("{self_id}-{key}-down");
             wait_for_artifact(client, &read_key).await?;
             let read = GhReadSocket::new(client, backend_ids.clone(), &read_key).await?;
 
