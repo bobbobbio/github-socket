@@ -351,8 +351,8 @@ struct GhSocket {
 impl GhSocket {
     async fn new(client: &GhClient, read_key: &str, write_key: &str) -> Result<Self> {
         Ok(Self {
-            read: GhReadSocket::new(client, read_key).await?,
             write: GhWriteSocket::new(client, write_key).await?,
+            read: GhReadSocket::new(client, read_key).await?,
         })
     }
 
