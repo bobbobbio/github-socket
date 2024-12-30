@@ -343,28 +343,58 @@ impl GhWriteSocket {
     }
 }
 
-async fn job_one_experiment() {
-    let client = GhClient::new();
-    let mut write_sock = GhWriteSocket::new(&client, "foo").await.unwrap();
+struct GhSocket {
+    read: GhReadSocket,
+    write: GhWriteSocket,
+}
 
-    write_sock.write_msg(&b"abc"[..]).await.unwrap();
-
-    for _ in 0..3 {
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        write_sock.write_msg(&b"def"[..]).await.unwrap();
+impl GhSocket {
+    async fn new(client: &GhClient, read_key: &str, write_key: &str) -> Result<Self> {
+        Ok(Self {
+            read: GhReadSocket::new(client, read_key).await?,
+            write: GhWriteSocket::new(client, write_key).await?,
+        })
     }
 
-    write_sock.write_msg(&b"done"[..]).await.unwrap();
+    async fn read_msg(&mut self) -> Result<Vec<u8>> {
+        self.read.read_msg().await
+    }
+
+    async fn write_msg(&mut self, data: &[u8]) -> Result<()> {
+        self.write.write_msg(data).await
+    }
+}
+
+async fn job_one_experiment() {
+    let client = GhClient::new();
+    let mut sock = GhSocket::new(&client, "foo-a", "foo-b").await.unwrap();
+
+    for _ in 0..3 {
+        println!("sending ping");
+        sock.write_msg(&b"ping"[..]).await.unwrap();
+
+        println!("waiting for response");
+        let msg = sock.read_msg().await.unwrap();
+        let msg_str = String::from_utf8_lossy(&msg);
+        println!("got {msg_str:?}");
+
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    }
+
+    sock.write_msg(&b"done"[..]).await.unwrap();
 }
 
 async fn job_two_experiment() {
     let client = GhClient::new();
-    let mut read_sock = GhReadSocket::new(&client, "foo").await.unwrap();
+    let mut sock = GhSocket::new(&client, "foo-b", "foo-a").await.unwrap();
     loop {
-        let msg = read_sock.read_msg().await.unwrap();
+        let msg = sock.read_msg().await.unwrap();
         let msg_str = String::from_utf8_lossy(&msg);
         println!("got message = {msg_str:?}");
-        if msg_str == "done" {
+
+        if msg_str == "ping" {
+            sock.write_msg(&b"pong"[..]).await.unwrap();
+        } else if msg_str == "done" {
             break;
         }
     }
