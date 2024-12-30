@@ -1,7 +1,6 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use azure_storage_blobs::prelude::BlobClient;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -196,6 +195,7 @@ impl GhClient {
         Ok(())
     }
 
+    #[expect(dead_code)]
     async fn upload(&self, name: &str, content: &[u8]) -> Result<()> {
         let blob_client = self.start_upload(name).await?;
         blob_client
@@ -238,65 +238,11 @@ impl GhClient {
         Ok(BlobClient::from_sas_url(&url)?)
     }
 
+    #[expect(dead_code)]
     async fn download(&self, backend_ids: BackendIds, name: &str) -> Result<Vec<u8>> {
         let blob_client = self.start_download(backend_ids, name).await?;
         let content = blob_client.get_content().await?;
         Ok(content.into())
-    }
-}
-
-struct GhReadSocket {
-    client: Arc<GhClient>,
-    remote_backend_ids: BackendIds,
-    key: String,
-    sequence_id: u64,
-}
-
-impl GhReadSocket {
-    fn new(client: Arc<GhClient>, remote_backend_ids: BackendIds, key: String) -> Self {
-        Self {
-            client,
-            remote_backend_ids: remote_backend_ids.clone(),
-            key,
-            sequence_id: 1,
-        }
-    }
-
-    async fn read_msg(&mut self) -> Result<Vec<u8>> {
-        let next = format!("{}-{}", &self.key, &self.sequence_id);
-        self.sequence_id += 1;
-        loop {
-            if let Ok(content) = self
-                .client
-                .download(self.remote_backend_ids.clone(), &next)
-                .await
-            {
-                break Ok(content);
-            }
-        }
-    }
-}
-
-struct GhWriteSocket {
-    client: Arc<GhClient>,
-    key: String,
-    sequence_id: u64,
-}
-
-impl GhWriteSocket {
-    fn new(client: Arc<GhClient>, key: String) -> Self {
-        Self {
-            client,
-            key,
-            sequence_id: 1,
-        }
-    }
-
-    async fn send_msg(&mut self, content: &[u8]) -> Result<()> {
-        let next = format!("{}-{}", &self.key, &self.sequence_id);
-        self.client.upload(&next, content).await?;
-        self.sequence_id += 1;
-        Ok(())
     }
 }
 
@@ -311,67 +257,72 @@ async fn wait_for_artifact(client: &GhClient, name: &str) -> Result<BackendIds> 
     }
 }
 
-struct GhSocket {
-    read: GhReadSocket,
-    write: GhWriteSocket,
+struct GhReadSocket {
+    blob: BlobClient,
+    index: usize,
+    etag: Option<azure_core::Etag>,
 }
 
-impl GhSocket {
-    async fn connect(key: &str) -> Result<Self> {
-        let client = Arc::new(GhClient::new());
-        client.upload(&format!("{key}-connect"), b" ").await?;
-        let backend_ids = wait_for_artifact(&client, &format!("{key}-listen")).await?;
+impl GhReadSocket {
+    async fn new(client: &GhClient, key: &str) -> Result<Self> {
+        let backend_ids = wait_for_artifact(client, key).await?;
+
+        let blob = client.start_download(backend_ids, key).await?;
         Ok(Self {
-            read: GhReadSocket::new(client.clone(), backend_ids, format!("{key}-down")),
-            write: GhWriteSocket::new(client, format!("{key}-up")),
+            blob,
+            index: 0,
+            etag: None,
         })
     }
 
-    async fn listen(key: &str) -> Result<Self> {
-        let client = Arc::new(GhClient::new());
-        client.upload(&format!("{key}-listen"), b" ").await?;
-        let backend_ids = wait_for_artifact(&client, &format!("{key}-connect")).await?;
-        Ok(Self {
-            read: GhReadSocket::new(client.clone(), backend_ids, format!("{key}-up")),
-            write: GhWriteSocket::new(client, format!("{key}-down")),
-        })
+    async fn maybe_read_msg(&mut self) -> Result<Option<Vec<u8>>> {
+        use futures_util::StreamExt as _;
+
+        let mut builder = self.blob.get().range(self.index..);
+
+        if let Some(etag) = &self.etag {
+            builder = builder.if_match(azure_core::request_options::IfMatchCondition::NotMatch(
+                etag.to_string(),
+            ));
+        }
+
+        let mut stream = builder.into_stream();
+        let resp = stream
+            .next()
+            .await
+            .ok_or_else(|| anyhow!("missing read response"))?;
+        match resp {
+            Ok(resp) => {
+                self.etag = Some(resp.blob.properties.etag);
+
+                let msg = resp.data.collect().await?;
+                self.index += msg.len();
+                Ok(Some(msg.to_vec()))
+            }
+            Err(err) => {
+                use azure_core::{error::ErrorKind, StatusCode};
+
+                match err.kind() {
+                    ErrorKind::HttpResponse {
+                        status: StatusCode::PreconditionFailed,
+                        ..
+                    } => {
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+                Err(err.into())
+            }
+        }
     }
 
     async fn read_msg(&mut self) -> Result<Vec<u8>> {
-        self.read.read_msg().await
+        loop {
+            if let Some(res) = self.maybe_read_msg().await? {
+                return Ok(res);
+            }
+        }
     }
-
-    async fn send_msg(&mut self, content: &[u8]) -> Result<()> {
-        self.write.send_msg(content).await
-    }
-}
-
-#[expect(dead_code)]
-async fn job_one() {
-    let mut socket = GhSocket::listen("foo").await.unwrap();
-
-    println!("sending ping");
-    socket.send_msg(&[1; 1024 * 1024]).await.unwrap();
-    println!("sent ping");
-
-    println!("waiting for response");
-    let content = socket.read_msg().await.unwrap();
-    assert!(content.iter().all(|b| *b == 2));
-    println!("received response of length {}", content.len());
-}
-
-#[expect(dead_code)]
-async fn job_two() {
-    let mut socket = GhSocket::connect("foo").await.unwrap();
-
-    println!("waiting for message");
-    let content = socket.read_msg().await.unwrap();
-    assert!(content.iter().all(|b| *b == 1));
-    println!("received message of length {}", content.len());
-
-    println!("sending pong");
-    socket.send_msg(&[2; 1024 * 1024]).await.unwrap();
-    println!("sent pong");
 }
 
 async fn job_one_experiment() {
@@ -389,30 +340,11 @@ async fn job_one_experiment() {
 }
 
 async fn job_two_experiment() {
-    use futures_util::stream::StreamExt as _;
     let client = GhClient::new();
-    let backend_ids = wait_for_artifact(&client, "foo").await.unwrap();
-    let mut next = 0;
-    let mut etag: Option<azure_core::Etag> = None;
+    let mut read_sock = GhReadSocket::new(&client, "foo").await.unwrap();
     loop {
-        let b_client = client
-            .start_download(backend_ids.clone(), "foo")
-            .await
-            .unwrap();
-
-        let mut builder = b_client.get().range(next..);
-        if let Some(etag) = &etag {
-            builder = builder.if_match(azure_core::request_options::IfMatchCondition::NotMatch(
-                etag.to_string(),
-            ));
-        }
-        let mut stream = builder.into_stream();
-        if let Ok(resp) = stream.next().await.unwrap() {
-            etag = Some(resp.blob.properties.etag);
-            let msg = resp.data.collect().await.unwrap();
-            println!("got message = {next}: {msg:?}");
-            next += msg.len();
-        }
+        let msg = read_sock.read_msg().await.unwrap();
+        println!("got message = {msg:?}");
     }
 }
 
