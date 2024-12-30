@@ -309,6 +309,12 @@ impl GhReadSocket {
                     } if error_code == "ConditionNotMet" => {
                         return Ok(None);
                     }
+                    ErrorKind::HttpResponse {
+                        status: StatusCode::RequestedRangeNotSatisfiable,
+                        error_code: Some(error_code),
+                    } if error_code == "InvalidRange" => {
+                        return Ok(None);
+                    }
                     _ => {}
                 }
                 Err(err.into())
