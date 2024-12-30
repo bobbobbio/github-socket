@@ -304,7 +304,7 @@ impl GhReadSocket {
 
                 match err.kind() {
                     ErrorKind::HttpResponse {
-                        status: StatusCode::PreconditionFailed,
+                        status: StatusCode::NotModified,
                         ..
                     } => {
                         return Ok(None);
