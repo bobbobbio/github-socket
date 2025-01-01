@@ -452,7 +452,7 @@ async fn listener() {
     for _ in 0..3 {
         let mut sock = listener.accept_one(&client).await.unwrap();
         handles.push(tokio::task::spawn(async move {
-            for _ in 0..3 {
+            loop {
                 println!("sending ping");
                 sock.write_msg(&b"ping"[..]).await.unwrap();
 
@@ -460,11 +460,7 @@ async fn listener() {
                 let msg = sock.read_msg().await.unwrap();
                 let msg_str = String::from_utf8_lossy(&msg);
                 println!("got {msg_str:?}");
-
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             }
-
-            sock.write_msg(&b"done"[..]).await.unwrap();
         }));
     }
 
