@@ -2,6 +2,7 @@ use anyhow::{anyhow, bail, Result};
 use azure_storage_blobs::prelude::BlobClient;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -250,19 +251,23 @@ struct GhReadSocket {
     blob: BlobClient,
     index: usize,
     etag: Option<azure_core::Etag>,
+    backend_ids: BackendIds,
+    key: String,
 }
 
 impl GhReadSocket {
     async fn new(client: &GhClient, backend_ids: BackendIds, key: &str) -> Result<Self> {
-        let blob = client.start_download(backend_ids, key).await?;
+        let blob = client.start_download(backend_ids.clone(), key).await?;
         Ok(Self {
             blob,
             index: 0,
             etag: None,
+            backend_ids,
+            key: key.into()
         })
     }
 
-    async fn maybe_read_msg(&mut self) -> Result<Option<Vec<u8>>> {
+    async fn maybe_read_msg(&mut self, client: &GhClient) -> Result<Option<Vec<u8>>> {
         use futures_util::StreamExt as _;
 
         let mut builder = self.blob.get().range(self.index..);
@@ -302,6 +307,13 @@ impl GhReadSocket {
                     } if error_code == "InvalidRange" => {
                         return Ok(None);
                     }
+                    ErrorKind::HttpResponse {
+                        status: StatusCode::Forbidden,
+                        error_code: Some(error_code),
+                    } if error_code == "AuthenticationFailed" => {
+                        self.blob = client.start_download(self.backend_ids.clone(), &self.key).await?;
+                        return Ok(None);
+                    }
                     _ => {}
                 }
                 Err(err.into())
@@ -309,9 +321,9 @@ impl GhReadSocket {
         }
     }
 
-    async fn read_msg(&mut self) -> Result<Vec<u8>> {
+    async fn read_msg(&mut self, client: &GhClient) -> Result<Vec<u8>> {
         loop {
-            if let Some(res) = self.maybe_read_msg().await? {
+            if let Some(res) = self.maybe_read_msg(client).await? {
                 return Ok(res);
             }
         }
@@ -390,8 +402,8 @@ impl GhSocket {
         }
     }
 
-    async fn read_msg(&mut self) -> Result<Vec<u8>> {
-        self.read.read_msg().await
+    async fn read_msg(&mut self, client: &GhClient) -> Result<Vec<u8>> {
+        self.read.read_msg(client).await
     }
 
     async fn write_msg(&mut self, data: &[u8]) -> Result<()> {
@@ -445,19 +457,20 @@ impl GhListener {
 }
 
 async fn listener() {
-    let client = GhClient::new();
+    let client = Arc::new(GhClient::new());
     let mut listener = GhListener::new(&client, "foo").await.unwrap();
 
     let mut handles = vec![];
     for _ in 0..3 {
-        let mut sock = listener.accept_one(&client).await.unwrap();
+        let mut sock = listener.accept_one(&*client).await.unwrap();
+        let other_client = client.clone();
         handles.push(tokio::task::spawn(async move {
             loop {
                 println!("sending ping");
                 sock.write_msg(&b"ping"[..]).await.unwrap();
 
                 println!("waiting for response");
-                let msg = sock.read_msg().await.unwrap();
+                let msg = sock.read_msg(&*other_client).await.unwrap();
                 let msg_str = String::from_utf8_lossy(&msg);
                 println!("got {msg_str:?}");
             }
@@ -473,7 +486,7 @@ async fn connector() {
     let client = GhClient::new();
     let mut sock = GhSocket::connect(&client, "foo").await.unwrap();
     loop {
-        let msg = sock.read_msg().await.unwrap();
+        let msg = sock.read_msg(&client).await.unwrap();
         let msg_str = String::from_utf8_lossy(&msg);
         println!("got message = {msg_str:?}");
 
